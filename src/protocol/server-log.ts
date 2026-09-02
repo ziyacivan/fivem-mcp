@@ -86,7 +86,7 @@ export class ServerLogFile {
     options: { timeoutMs: number; pollMs?: number },
   ): Promise<ConsoleLine> {
     const regex = new RegExp(pattern);
-    const pollMs = options.pollMs ?? 400;
+    const pollMs = options.pollMs ?? 150;
     const deadline = Date.now() + options.timeoutMs;
     let cursor = (await fs.stat(this.path).catch(() => null))?.size ?? 0;
     let partial = "";

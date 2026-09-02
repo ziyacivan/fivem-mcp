@@ -60,6 +60,36 @@ export function encodePng(width: number, height: number, rgb: Buffer): Buffer {
   ]);
 }
 
+export interface CropRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Crop RGB8 pixels (row-major, no alpha) to a rectangle clamped to the image. */
+export function cropRgb(
+  src: Buffer,
+  srcW: number,
+  srcH: number,
+  rect: CropRect | undefined,
+): { rgb: Buffer; width: number; height: number } {
+  if (!rect) return { rgb: src, width: srcW, height: srcH };
+  const x = Math.max(0, Math.round(rect.x));
+  const y = Math.max(0, Math.round(rect.y));
+  const w = Math.min(srcW - x, Math.round(rect.width));
+  const h = Math.min(srcH - y, Math.round(rect.height));
+  if (w <= 0 || h <= 0) {
+    throw new Error(`crop ${JSON.stringify(rect)} lies outside the ${srcW}x${srcH} image`);
+  }
+  const out = Buffer.alloc(w * h * 3);
+  for (let row = 0; row < h; row++) {
+    const from = ((y + row) * srcW + x) * 3;
+    src.copy(out, row * w * 3, from, from + w * 3);
+  }
+  return { rgb: out, width: w, height: h };
+}
+
 /** Downscale with bilinear sampling so screenshots stay token-cheap. */
 export function downscaleRgb(
   rgb: Buffer,

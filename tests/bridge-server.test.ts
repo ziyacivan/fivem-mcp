@@ -155,6 +155,20 @@ describe("bridge server half (faked FiveM runtime)", () => {
     expect(state.clientTriggered[0]?.[1]).toBe(5);
   });
 
+  it("poll drains buffered client results exactly once", () => {
+    // clear any entries left by earlier tests, then produce exactly one
+    run("d0", "server", "-", { op: "poll" });
+    const ack = run("p1", "client", "7", { op: "position" });
+    expect(ack).toContain("MCPB_ACK p1");
+    state.events.get("mcpb:res")?.("p1", JSON.stringify({ ok: true, data: { z: 9 } }));
+    const line = run("p2", "server", "-", { op: "poll" }) as string;
+    expect(JSON.parse(line.slice("MCP_RESULT p2 ".length)).data).toEqual([
+      { id: "p1", result: { ok: true, data: { z: 9 } } },
+    ]);
+    const again = run("p3", "server", "-", { op: "poll" }) as string;
+    expect(JSON.parse(again.slice("MCP_RESULT p3 ".length)).data).toEqual([]);
+  });
+
   it("client result relay emits only for dispatched ids", () => {
     const handler = state.events.get("mcpb:res");
     if (!handler) throw new Error("no relay");

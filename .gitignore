@@ -3,3 +3,8 @@ dist/
 coverage/
 *.log
 .DS_Store
+
+# mcp-publisher auth + tooling leftovers - never commit
+.mcpregistry_*
+.mcp-publisher
+mcp-publisher.exe

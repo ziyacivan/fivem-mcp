@@ -7,7 +7,7 @@ import type { ConsoleLine } from "./console-buffer.js";
 import type { Hub, Target } from "./hub.js";
 import { forceQuitFiveM, latestClientLog, launchFiveM } from "./launcher.js";
 import { ServerLogFile } from "./protocol/server-log.js";
-import { downscaleRgb, encodePng } from "./win/png.js";
+import { type CropRect, cropRgb, downscaleRgb, encodePng } from "./win/png.js";
 import {
   bgraToRgb,
   captureWindow,
@@ -57,7 +57,7 @@ const TARGET_DESCRIPTION =
   "are not console commands.";
 
 export function buildMcpServer(config: Config, hub: Hub): McpServer {
-  const server = new McpServer({ name: "fivem-mcp-server", version: "0.4.0" });
+  const server = new McpServer({ name: "fivem-mcp-server", version: "0.5.0" });
 
   server.registerTool(
     "status",
@@ -441,7 +441,11 @@ export function buildMcpServer(config: Config, hub: Hub): McpServer {
         "PNG of the FiveM window (PrintWindow with PW_RENDERFULLCONTENT; falls back to a " +
         "screen BitBlt of the window rect when the swapchain returns black, which means " +
         "whatever covers the window is also captured — the game is focused first). " +
-        "Downscaled so vision models can read it cheaply.",
+        "Downscaled so vision models can read it cheaply. COST WARNING: every screenshot " +
+        "stays in the transcript and is re-sent on every later turn - many shots multiply " +
+        "session latency. Prefer text probes (read_console, wait_for_console, bridge ops); " +
+        "when pixels are the evidence, keep maxSide small (640 suffices for layout checks) " +
+        "and crop to the panel of interest.",
       inputSchema: {
         maxSide: z
           .number()
@@ -449,14 +453,19 @@ export function buildMcpServer(config: Config, hub: Hub): McpServer {
           .min(320)
           .max(4096)
           .optional()
-          .describe("Downscale longest side (default 1280)"),
+          .describe("Downscale longest side (default 900)"),
+        crop: z
+          .string()
+          .optional()
+          .describe('Window-pixel rect as JSON, e.g. {"x":300,"y":200,"width":400,"height":300}'),
       },
     },
-    guarded(async (args: { maxSide?: number | undefined }) => {
+    guarded(async (args: { maxSide?: number | undefined; crop?: string | undefined }) => {
       const game = ensureGameFocused();
       const frame = captureWindow(game.hwnd);
-      const rgb = bgraToRgb(frame.pixels);
-      const scaled = downscaleRgb(rgb, frame.width, frame.height, args.maxSide ?? 1280);
+      const cropRect = args.crop ? (JSON.parse(args.crop) as CropRect) : undefined;
+      const cropped = cropRgb(bgraToRgb(frame.pixels), frame.width, frame.height, cropRect);
+      const scaled = downscaleRgb(cropped.rgb, cropped.width, cropped.height, args.maxSide ?? 900);
       const png = encodePng(scaled.width, scaled.height, scaled.rgb);
       return {
         content: [
@@ -660,13 +669,13 @@ export function buildMcpServer(config: Config, hub: Hub): McpServer {
       title: "Invoke a bridge operation (mcpb resource)",
       description:
         "Runs an operation through the mcpb bridge resource — the half neither devcon nor " +
-        "RCON can reach. Server ops (target=server): ping, players, call_export " +
+        "RCON can reach. Server ops (target=server): ping, players, poll, call_export " +
         "{resource, method, args}, trigger_event {event, args, toClient?, player?} " +
         "(event names must be in mcpb_event_allowlist). Client ops (target=client, needs src): " +
         "ping, position, teleport {x,y,z,heading?}, freeze {freeze}, call_native {name, args}, " +
         "send_nui {resource, message, event?}, nui_callback {resource, endpoint, payload}. " +
-        "Client results come back as MCP_RESULT lines on the server console (needs " +
-        "FIVEM_SERVER_LOG). The bridge must be installed, started and enabled (mcpb_enabled true).",
+        "Client results are collected in-band via the bridge's poll queue — no FIVEM_SERVER_LOG " +
+        "needed. The bridge must be installed, started and enabled (mcpb_enabled true).",
       inputSchema: {
         target: z
           .enum(["server", "client"])

@@ -68,6 +68,23 @@ runtime has **no `GetPlayerIdentifiers` global** (guarded, returns null), and th
 bootstrapper window is also titled `FiveM` (game-window detection now requires the
 `by Cfx.re` title pattern; `/^FiveM/i` alone matched a browser tab open on this repo).
 
+## M5 — session economy + liveness (v0.5, 2026-09-02, born from a real long Claude session)
+
+A long agent session profiled three costs; all three are code fixes now:
+
+* **Bridge latency:** client results are queued on the bridge server and drained in-band
+  over RCON (`poll`, 100 ms→1 s backoff) — no more 400 ms file tail, and `FIVEM_SERVER_LOG`
+  is optional again (legacy fallback intact). The overlap test caught a real race in the
+  first cut (draining a poll had to route *every* entry, not stop at the caller's own).
+* **Dead devcon sockets:** a vanished game process leaves a half-open TCP that silently
+  swallows commands. Connections now carry TCP keepalive (10 s) and a `PPCR` re-hello
+  heartbeat when inbound traffic has been quiet 15 s — dead probes kill the socket so the
+  next call redials. No more "works until you tab out of the game for ten minutes".
+* **Screenshot pile-up:** every image in the transcript is re-sent every turn (a 25-shot
+  session measured ~2.8 m cumulative tokens). Default downscale 1280 → **900**, added
+  `crop`, and the tool description now states the cost and steers to text probes first.
+* Log tail `waitFor` default poll 400 → 150 ms (`wait_for_console` server target).
+
 ## M4 — polish & distribution
 
 * [x] npm metadata: repository/keywords/homepage/bugs, `mcpName`

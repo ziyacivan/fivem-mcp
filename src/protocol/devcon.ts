@@ -180,12 +180,24 @@ export interface DevconConnectOptions {
 /**
  * A live devcon connection. Emits:
  *  - "print"  (line: DevconPrintLine)  for every console line the process writes
+ *  - "ready"  on every AINF (handshake and heartbeat re-handshakes alike)
  *  - "close"  when the socket dies for any reason
+ *
+ * Liveness: the FiveM client can vanish without a TCP FIN (game exit, reload),
+ * leaving a half-open socket that still *looks* writable. Without keepalive and
+ * an application-level probe, commands would silently write into that black
+ * hole. So: kernel keepalive every 10s, plus a hello-probe whenever inbound
+ * traffic has been quiet for 15s — a live process answers PPCR with a fresh
+ * AINF, no answer within 3s kills the socket so the next ensure() redials.
  */
 export class DevconConnection extends EventEmitter {
   private socket: net.Socket;
   private decoder = new DevconFrameDecoder((frame) => this.handleFrame(frame));
   private ready = false;
+  private lastRx = Date.now();
+  private probePending = false;
+  private probeAt = 0;
+  private probeTimer: NodeJS.Timeout | null = null;
 
   /** Channel id -> name, populated by CHAN frames. */
   readonly channels = new Map<number, string>();
@@ -198,12 +210,14 @@ export class DevconConnection extends EventEmitter {
     const { host, port, connectTimeoutMs = 5000 } = options;
     const socket = net.connect({ host, port });
     this.socket = socket;
+    socket.setKeepAlive(true, 10_000);
     socket.setTimeout(connectTimeoutMs);
     socket.on("connect", () => {
       socket.setTimeout(0);
       socket.write(encodeHello());
     });
     socket.on("data", (chunk) => {
+      this.lastRx = Date.now();
       try {
         this.decoder.push(chunk);
       } catch (error) {
@@ -217,6 +231,21 @@ export class DevconConnection extends EventEmitter {
       /* surfaced through "close"; an unhandled 'error' would crash the process */
       this.destroy();
     });
+    this.probeTimer = setInterval(() => this.probeTick(), 5000);
+    this.probeTimer.unref();
+  }
+
+  private probeTick(): void {
+    if (this.probePending && Date.now() - this.probeAt > 3000) {
+      // hello unanswered — the socket is a corpse
+      this.destroy();
+      return;
+    }
+    if (!this.probePending && Date.now() - this.lastRx > 15_000 && this.socket.writable) {
+      this.probePending = true;
+      this.probeAt = Date.now();
+      this.socket.write(encodeHello());
+    }
   }
 
   /** Connect and resolve once the AINF handshake frame has arrived. */
@@ -268,6 +297,7 @@ export class DevconConnection extends EventEmitter {
   private handleFrame(frame: DevconFrame): void {
     switch (frame.type) {
       case "ainf":
+        this.probePending = false;
         this.info = {
           commandLine: frame.commandLine,
           gameName: frame.gameName,
@@ -301,6 +331,10 @@ export class DevconConnection extends EventEmitter {
   }
 
   destroy(): void {
+    if (this.probeTimer) {
+      clearInterval(this.probeTimer);
+      this.probeTimer = null;
+    }
     this.socket.destroy();
   }
 

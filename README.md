@@ -115,7 +115,7 @@ claude mcp add fivem -- node ./dist/index.js        # points at your working cop
 | `FIVEM_CLIENT_DEVCON_PORT` | `29200` then `29300` | Override the client devcon port |
 | `FIVEM_RCON_ADDRESS` | `FIVEM_HOST:30120` | FXServer game port (UDP RCON + getinfo) |
 | `FIVEM_RCON_PASSWORD` | — | Matches `rcon_password` in `server.cfg`; needed by `server_command` |
-| `FIVEM_SERVER_LOG` | — | Path to FXServer's redirected stdout; enables server-side `read_console` / `wait_for_console` and the bridge's client results |
+| `FIVEM_SERVER_LOG` | — | Path to FXServer's redirected stdout; enables server-side `read_console` / `wait_for_console`. Not needed by the bridge since v0.5 (results poll in-band) — it is the pre-0.5 fallback transport |
 | `FIVEM_MCPB_TOKEN` | — | Matches `mcpb_token` on the server; sent with every bridge request |
 | `FIVEM_CONSOLE_CAPACITY` | `5000` | Client console lines kept in the ring buffer |
 | `FIVEM_QUIET_MS` | `400` | Consider command output done after this quiet period |
@@ -136,7 +136,7 @@ claude mcp add fivem -- node ./dist/index.js        # points at your working cop
 | `quit_game` | Graceful `quit` over devcon; `force` kills the FiveM process tree. |
 | `window_status` | Game window existence, title, pid, rect, foreground state. |
 | `focus_window` / `restore_focus` | Bring the game forward / give focus back to your window. Input tools focus automatically. |
-| `screenshot` | PNG of the game window (PrintWindow with screen-BitBlt fallback), downscaled for vision models. |
+| `screenshot` | PNG of the game window (PrintWindow, screen-BitBlt fallback). Downscaled — default 900, optional `crop` rect. Every shot costs transcript tokens all session: prefer text probes, shoot small. |
 | `press_key` / `hold_key` / `release_key` | Real scan-code input — GTA's DirectInput ignores VK-only injection. Held keys are released if the process dies. |
 | `type_text` | Literal Unicode events — the channel the F8 console and chat NUI read. |
 | `mouse_move` / `click` / `scroll` | Relative moves drive the camera; absolute coordinates position the cursor for NUI. |
@@ -174,6 +174,9 @@ and point this server at it with `FIVEM_MCPB_TOKEN`. Then:
 bridge { target: "client", src: 1, op: "position" }
 bridge { target: "server", op: "call_export", args: "{\"resource\":\"myres\",\"method\":\"money\",\"args\":[1]}" }
 ```
+
+Client results come back through an in-band queue polled over RCON (~100 ms granularity
+since v0.5 — no log file needed; pre-0.5 resources still fall back to the log tail).
 
 **Dev servers only.** `mcpb_enabled` defaults to `false` and the token is checked when set,
 but `call_native` is exactly as safe as the console it runs behind — keep RCON and this

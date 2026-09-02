@@ -96,6 +96,12 @@ Bind address is `127.0.0.1` **unless the process command line contains `-devcon`
 `0.0.0.0` [A:263-266]. The socket has **no authentication** — keep it loopback-only, never
 port-forward it.
 
+Liveness (v0.5): every connection enables TCP keepalive (10 s) **and** re-sends a `PPCR`
+hello whenever it has seen no inbound frame for 15 s. A live process answers with a fresh
+AINF (+ CHAN/CVAR diffs); no answer within 3 s kills the socket so the next dial reconnects.
+This is how a vanished game process (which leaves a half-open TCP with no FIN) stops
+poisoning the console stream instead of eating commands into a black hole.
+
 The port is multiplexed with plain HTTP (a profiler endpoint) [A:277-345]; we always speak
 the binary protocol, whose frames are matched by their first four ASCII bytes [A:352-361].
 
@@ -156,9 +162,18 @@ mcpb <id> <server|client> <src|-> <base64(json request)>       (issued over RCON
 
 server op  -> printed synchronously: MCP_RESULT <id> <json>    (captured by the RCON reply)
 client op  -> printed synchronously: MCPB_ACK <id> dispatched to <src>
-           -> later on the server console:     MCP_RESULT <id> <json>
+           -> answer collected in-band:  mcpb <id> server - b64{"op":"poll"}
+              -> MCP_RESULT <id> {"ok":true,"data":[{id, result}, ...]}   (drains the queue)
+           -> ALSO printed to the console as MCP_RESULT <id> <json> (for humans/CI/legacy)
 disabled   -> MCPB_ERR <id> bridge disabled — set mcpb_enabled true
 ```
+
+Client results queue on the bridge server (TTL 60 s, max 128 entries, oldest dropped,
+drained-once) so the MCP server can poll them at ~100 ms backoff instead of tailing the
+log file at 400 ms — same wire, ~4x the latency and no `FIVEM_SERVER_LOG` requirement.
+Concurrent calls route by id; foreign poll entries land in the caller-side inbox.
+A pre-0.5 resource without `poll` answers `unknown server op 'poll'` — the client then
+falls back to the log tail, and says so when no log is configured.
 
 * `<id>` is regex-safe (`mcp-[0-9a-z-]+`) and single-use: the server half relays a client
   result only for ids it dispatched itself, so a hijacked client cannot forge answers for
@@ -168,13 +183,13 @@ disabled   -> MCPB_ERR <id> bridge disabled — set mcpb_enabled true
   empty = `trigger_event` can trigger nothing).
 * Results: `{ ok: true, data }` / `{ ok: false, error }`; every failure — export throw,
   native missing, unknown op — arrives as `ok:false`, never as a broken line.
-* Server ops: `ping`, `players`, `call_export`, `trigger_event`.
+* Server ops: `ping`, `players`, `poll`, `call_export`, `trigger_event`.
   Client ops: `ping`, `position`, `teleport`, `freeze`, `call_native`, `send_nui`,
   `nui_callback` (POSTs `https://<resource>/<endpoint>` — the exact URL the NUI fetch uses,
   so a screen's callback can be exercised without a browser).
 
-Why the log is the return path for client results: the RCON capture closes when the command
-handler returns, and a client round-trip is asynchronous by nature. `wait_for_console` /
-the tailer read `MCP_RESULT` lines, which is why `FIVEM_SERVER_LOG` is required for client
-ops. A future bridge version can carry results in-band via a poll (`mcpb poll <id>`);
-until then this is the contract both halves implement and `tests/bridge-*.test.ts` pin.
+The `poll` op exists because a client round-trip is inherently asynchronous while the RCON
+capture closes when the command handler returns: the bridge server therefore *buffers*
+answers for the poller instead of forcing the client to tail a log file. The contract both
+halves implement is pinned by `tests/bridge-*.test.ts`, and the log-tail path stays alive
+as the pre-0.5 fallback.

@@ -8,6 +8,22 @@
 
 const pendingClientIds = new Set();
 
+// Client results wait here until the MCP server drains them with the `poll`
+// op. This is the in-band return path: no log-file tailing needed, ~100 ms
+// granularity instead of 400+ ms file polls. The MCP_RESULT console line is
+// still printed — for humans, CI captures and older clients.
+const bufferedResults = new Map(); // id -> { json, at }
+const RESULT_TTL_MS = 60000;
+const RESULT_BUFFER_MAX = 128;
+
+function bufferResult(id, json) {
+  if (bufferedResults.size >= RESULT_BUFFER_MAX) {
+    const oldest = bufferedResults.keys().next();
+    if (!oldest.done) bufferedResults.delete(oldest.value);
+  }
+  bufferedResults.set(id, { json, at: Date.now() });
+}
+
 function enabled() {
   return GetConvar("mcpb_enabled", "false") === "true";
 }
@@ -95,6 +111,23 @@ const SERVER_OPS = {
     return { triggeredEvent: req.event };
   },
 
+  poll() {
+    const now = Date.now();
+    const out = [];
+    for (const [id, entry] of bufferedResults) {
+      bufferedResults.delete(id);
+      if (now - entry.at > RESULT_TTL_MS) continue;
+      let result;
+      try {
+        result = JSON.parse(entry.json);
+      } catch (error) {
+        result = { ok: false, error: `buffered result unreadable: ${String(error)}` };
+      }
+      out.push({ id, result });
+    }
+    return out;
+  },
+
   wait() {
     // sync placeholder op to measure round-trip overhead
     return { waited: true };
@@ -118,6 +151,7 @@ AddEventHandler("mcpb:res", (id, resultJson) => {
   // forge results for someone else's call: ids are single-use.
   if (!pendingClientIds.has(id)) return;
   pendingClientIds.delete(id);
+  bufferResult(id, resultJson);
   let result;
   try {
     result = JSON.parse(resultJson);

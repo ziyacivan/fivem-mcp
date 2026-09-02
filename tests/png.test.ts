@@ -1,6 +1,6 @@
 import { inflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
-import { downscaleRgb, encodePng } from "../src/win/png.js";
+import { cropRgb, downscaleRgb, encodePng } from "../src/win/png.js";
 
 function readChunks(png: Buffer): Array<{ type: string; data: Buffer }> {
   const chunks: Array<{ type: string; data: Buffer }> = [];
@@ -62,6 +62,32 @@ describe("PNG encoder", () => {
     const ihdrLen = chunks[0]?.data.length ?? -1;
     const crcAt = 8 + 4 + ihdrLen;
     expect(png.readUInt32BE(crcAt)).toBeGreaterThan(0);
+  });
+});
+
+describe("cropRgb", () => {
+  const w = 4;
+  const h = 4;
+  const src = Buffer.alloc(w * h * 3);
+  src[(1 * w + 1) * 3] = 42; // (1,1)
+  src[(2 * w + 2) * 3] = 43; // (2,2)
+
+  it("no crop passes through", () => {
+    const out = cropRgb(src, w, h, undefined);
+    expect(out.rgb).toBe(src);
+    expect(out.width).toBe(w);
+  });
+
+  it("crops and clamps to the image", () => {
+    const out = cropRgb(src, w, h, { x: 1, y: 1, width: 3, height: 10 });
+    expect(out.width).toBe(3);
+    expect(out.height).toBe(3);
+    expect(out.rgb[0]).toBe(42);
+    expect(out.rgb[(1 * 3 + 1) * 3]).toBe(43);
+  });
+
+  it("rejects a fully-outside rect", () => {
+    expect(() => cropRgb(src, w, h, { x: 9, y: 0, width: 2, height: 2 })).toThrow(/outside/);
   });
 });
 
