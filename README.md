@@ -37,33 +37,58 @@ against a real FXServer + FiveM Legacy client (see `docs/plan.md` and `scripts/l
 
 ## Install
 
-```sh
-git clone https://github.com/ziyacivan/fivem-mcp
-cd fivem-mcp
-pnpm install && pnpm build
-```
-
-Register with your MCP client, e.g. Claude Code:
+Published on npm — no clone needed. Add it to **Claude Code** in one line:
 
 ```sh
-claude mcp add fivem -- env FIVEM_RCON_PASSWORD=yourpw node /path/to/fivem-mcp/dist/index.js
+claude mcp add fivem -s user \
+  -e FIVEM_RCON_PASSWORD=your-rcon-password \
+  -e FIVEM_SERVER_LOG=C:\FXServer\my-data\server.log \
+  -- npx -y fivem-mcp-server
 ```
 
-or in any client's JSON config:
+(`-s user` = available in every project; drop it for a per-project entry. Verify with `claude mcp get fivem` — status should read ✓ Connected. Remove with `claude mcp remove fivem -s user`.)
+
+For a **shared project config**, put `.mcp.json` in the repo root and commit it —
+Claude Code asks to approve it on first open, and env values can be interpolated
+from your local `.env`-less shell via `${VAR}` expansion:
 
 ```json
 {
   "mcpServers": {
     "fivem": {
-      "command": "node",
-      "args": ["/path/to/fivem-mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "fivem-mcp-server"],
       "env": {
-        "FIVEM_RCON_PASSWORD": "yourpw",
-        "FIVEM_SERVER_LOG": "C:\\FXServer\\my-data\\server.log"
+        "FIVEM_RCON_PASSWORD": "${FIVEM_RCON_PASSWORD}",
+        "FIVEM_SERVER_LOG": "${FIVEM_SERVER_LOG}"
       }
     }
   }
 }
+```
+
+For **Claude Desktop** (or any client with JSON config), add to
+`claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "fivem": {
+      "command": "npx",
+      "args": ["-y", "fivem-mcp-server"],
+      "env": { "FIVEM_RCON_PASSWORD": "your-rcon-password" }
+    }
+  }
+}
+```
+
+The server is also listed in the MCP Registry as
+`io.github.ziyacivan/fivem-mcp`. Building from source (development):
+
+```sh
+git clone https://github.com/ziyacivan/fivem-mcp
+cd fivem-mcp && pnpm install && pnpm build
+claude mcp add fivem -- node ./dist/index.js        # points at your working copy
 ```
 
 ## Configuration (environment)
