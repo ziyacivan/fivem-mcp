@@ -1,3 +1,11 @@
+import {
+  type BridgeResult,
+  buildCommandLine,
+  looksLikeMissingResource,
+  newCallId,
+  parseErrorLine,
+  parseResultLine,
+} from "./bridge-protocol.js";
 import type { Config } from "./config.js";
 import { ConsoleBuffer, type ConsoleLine } from "./console-buffer.js";
 import { DevconConnection } from "./protocol/devcon.js";
@@ -97,6 +105,64 @@ export class Hub {
   /** Password-free server identity via the getinfo OOB query. */
   serverInfo(): Promise<Record<string, string>> {
     return queryServerInfo({ host: this.config.rconHost, port: this.config.rconPort });
+  }
+
+  /**
+   * Invoke an operation on the mcpb bridge resource. Server ops answer inside
+   * the RCON capture; client ops round-trip through the game client and answer
+   * as MCP_RESULT lines on the server console (log tail).
+   */
+  async bridgeCall(options: {
+    target: Target;
+    op: string;
+    src?: number | null | undefined;
+    extra?: Record<string, unknown>;
+    timeoutMs?: number;
+  }): Promise<BridgeResult> {
+    const { target, op, src = null, extra = {}, timeoutMs = 8000 } = options;
+    if (!this.rcon.isConfigured) {
+      throw new Error("the bridge drives its server half over RCON — set FIVEM_RCON_PASSWORD");
+    }
+    if (target === "client" && !this.serverLog) {
+      throw new Error(
+        "client bridge ops read their results from the server log — set FIVEM_SERVER_LOG",
+      );
+    }
+    const id = newCallId();
+    const token = this.config.mcpbToken;
+    const req = { op, ...extra, ...(token ? { token } : {}) };
+    const armed =
+      target === "client" ? this.serverLog?.waitFor(`MCP_RESULT ${id}`, { timeoutMs }) : null;
+
+    const reply = await this.rcon.exec(buildCommandLine(id, target, src, req));
+    if (looksLikeMissingResource(reply)) {
+      throw new Error(
+        "mcpb is not installed — copy the bridge/ folder from fivem-mcp into the server's resources and add `ensure mcpb`; then set mcpb_enabled true (dev servers only)",
+      );
+    }
+    if (target === "server") {
+      for (const line of reply.split(/\r?\n/)) {
+        const error = parseErrorLine(line, id);
+        if (error) return { ok: false, error };
+        const result = parseResultLine(line, id);
+        if (result) return result;
+      }
+      return {
+        ok: false,
+        error: `bridge server op produced no MCP_RESULT line in the reply: ${reply.slice(0, 160)}`,
+      };
+    }
+
+    if (!armed) throw new Error("internal: no log waiter armed for client op");
+    try {
+      const line = await armed;
+      return parseResultLine(line.message, id) ?? { ok: false, error: "result line unreadable" };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `${message} — the client (src ${src}) did not answer within ${timeoutMs}ms: is mcpb started, is the player connected, and is its client script loaded?`,
+      );
+    }
   }
 
   async status(): Promise<Record<string, unknown>> {

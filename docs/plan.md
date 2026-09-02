@@ -44,15 +44,29 @@ Field-test checklist:
 * [ ] elevation trap: FiveM as admin + tool as normal user ⇒ SendInput silently dropped
       (UIPI) — the error text covers it, not yet observed in the wild
 
-## M3 — optional bridge resource (`fivem-mcp-bridge`, our own, MIT)
+## M3 — bridge resource (IMPLEMENTED as `bridge/`, protocol in docs/protocol.md §4)
 
-A small TypeScript resource that unlocks things neither devcon nor rcon can reach:
+Plain-JS resource, no build step, shipped in this repo (`ensure mcpb`):
 
-* invoke any native by name, `TriggerEvent` both directions, call any resource's exports
-* `mcp_position` / head-text style readback, scripted `RESULT:<name>=pass|fail` lines that
-  feed `wait_for_console` — the assertion primitive for real in-game tests
-* gated: `setr mcp_bridge_enabled` + one-shot token, server-side allowlist of event names;
-  refuses to do anything when the convar is off
+* server ops answered synchronously inside the RCON capture: `ping`, `players`,
+  `call_export` (any resource export), `trigger_event` (allowlist-gated)
+* client ops round-trip to the game process and answer as `MCP_RESULT` lines on the
+  server console: `position`, `teleport`, `freeze`, `call_native` (invoke any client
+  native by name), `send_nui`, `nui_callback` (drive a screen's own callbacks)
+* gates: `mcpb_enabled` (default false), `mcpb_token`, single-use dispatch ids so a
+  hijacked client cannot forge results for another call; every failure answers
+  `{ok:false, error}` instead of corrupting the line
+* MCP tool: `bridge` — see README; 29 tests pin the contract on both halves
+
+Live-verified 2026-09-02 against the running game (`scripts/live-m3.mjs`, all PASS):
+`players` saw the real join (`1:inkedev`); `position` read the character-screen preview
+ped at the coordinates multichar's own log printed; `teleport` moved it exactly +10 on x
+and the read-back confirmed it through the full RCON→dispatch→client-native→MCP_RESULT
+round trip; the client log carried the bridge activity; `quit` closed the game.
+Two real-world bugs the fakes could not catch, now fixed and pinned: FXServer's JS
+runtime has **no `GetPlayerIdentifiers` global** (guarded, returns null), and the
+bootstrapper window is also titled `FiveM` (game-window detection now requires the
+`by Cfx.re` title pattern; `/^FiveM/i` alone matched a browser tab open on this repo).
 
 ## M4 — polish
 

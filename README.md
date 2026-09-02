@@ -75,7 +75,8 @@ or in any client's JSON config:
 | `FIVEM_CLIENT_DEVCON_PORT` | `29200` then `29300` | Override the client devcon port |
 | `FIVEM_RCON_ADDRESS` | `FIVEM_HOST:30120` | FXServer game port (UDP RCON + getinfo) |
 | `FIVEM_RCON_PASSWORD` | — | Matches `rcon_password` in `server.cfg`; needed by `server_command` |
-| `FIVEM_SERVER_LOG` | — | Path to FXServer's redirected stdout; enables server-side `read_console` / `wait_for_console` |
+| `FIVEM_SERVER_LOG` | — | Path to FXServer's redirected stdout; enables server-side `read_console` / `wait_for_console` and the bridge's client results |
+| `FIVEM_MCPB_TOKEN` | — | Matches `mcpb_token` on the server; sent with every bridge request |
 | `FIVEM_CONSOLE_CAPACITY` | `5000` | Client console lines kept in the ring buffer |
 | `FIVEM_QUIET_MS` | `400` | Consider command output done after this quiet period |
 | `FIVEM_COMMAND_TIMEOUT_MS` | `5000` | Default max wait for `client_command` output |
@@ -101,6 +102,32 @@ or in any client's JSON config:
 | `mouse_move` / `click` / `scroll` | Relative moves drive the camera; absolute coordinates position the cursor for NUI. |
 | `wait` | Pause between actions (loading screens, walk cycles). |
 | `read_client_log` | The newest `CitizenFX_log_*.log` from the FiveM install. |
+| `bridge` | Invoke the `mcpb` bridge resource: player list, any resource export, event triggering (server half) and client natives, teleport, freeze, `SendNUIMessage`, NUI callback calls (client half). |
+
+## The bridge resource (`bridge/`)
+
+Client-side testing (natives, NUI callbacks, position) is outside what devcon and RCON can
+reach — the small companion resource closes that gap and ships in this repo.
+
+```sh
+# on the dev server
+cp -r bridge/ <server-data>/resources/mcpb     # or a junction
+# server.cfg:
+#   ensure mcpb
+#   setr mcpb_enabled true
+#   setr mcpb_token <a-random-token>
+```
+
+and point this server at it with `FIVEM_MCPB_TOKEN`. Then:
+
+```
+bridge { target: "client", src: 1, op: "position" }
+bridge { target: "server", op: "call_export", args: "{\"resource\":\"myres\",\"method\":\"money\",\"args\":[1]}" }
+```
+
+**Dev servers only.** `mcpb_enabled` defaults to `false` and the token is checked when set,
+but `call_native` is exactly as safe as the console it runs behind — keep RCON and this
+bridge off anything you care about. The full wire contract: [docs/protocol.md §4](docs/protocol.md).
 
 ## Typical loop (what an agent does)
 

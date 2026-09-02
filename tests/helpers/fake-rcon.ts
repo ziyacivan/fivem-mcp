@@ -8,6 +8,7 @@ import { encodeRconRequest } from "../../src/protocol/rcon.js";
 export class FakeRconServer {
   readonly receivedRequests: Buffer[] = [];
   mode: "ok" | "silent" | "bad-password" | "no-rcon" = "ok";
+  port = 0;
 
   private socket = dgram.createSocket("udp4");
 
@@ -63,6 +64,7 @@ export class FakeRconServer {
       });
       this.socket.bind(0, "127.0.0.1", () => {
         const address = this.socket.address();
+        this.port = address.port;
         resolve(address.port);
       });
     });

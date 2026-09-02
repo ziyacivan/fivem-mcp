@@ -143,4 +143,38 @@ planned bridge resource (M3), or run server-side through RCON where they execute
   Channels we never saw a `CHAN` for are reported as `#<id>`.
 
 Every print event also triggers the CHAN/CVAR diff flush for all subscribers [A:188-198],
-so the registries fill up as the server runs.
+so the registries fill up as the process prints.
+
+## 4. The mcpb bridge protocol (our own, versioned here)
+
+Neither devcon (console commands only) nor RCON (server console only) can invoke client
+natives, resource exports or a client's NUI. The `bridge/` resource closes that gap with
+one console command and two log lines; its whole wire contract is:
+
+```
+mcpb <id> <server|client> <src|-> <base64(json request)>       (issued over RCON)
+
+server op  -> printed synchronously: MCP_RESULT <id> <json>    (captured by the RCON reply)
+client op  -> printed synchronously: MCPB_ACK <id> dispatched to <src>
+           -> later on the server console:     MCP_RESULT <id> <json>
+disabled   -> MCPB_ERR <id> bridge disabled — set mcpb_enabled true
+```
+
+* `<id>` is regex-safe (`mcp-[0-9a-z-]+`) and single-use: the server half relays a client
+  result only for ids it dispatched itself, so a hijacked client cannot forge answers for
+  someone else's call (`bridge/server.js` `pendingClientIds`).
+* Request JSON: `{ op, token?, ...opArgs }`. Convars: `mcpb_enabled` (default **false**),
+  `mcpb_token` (compared when set), `mcpb_event_allowlist` (comma-separated event names;
+  empty = `trigger_event` can trigger nothing).
+* Results: `{ ok: true, data }` / `{ ok: false, error }`; every failure — export throw,
+  native missing, unknown op — arrives as `ok:false`, never as a broken line.
+* Server ops: `ping`, `players`, `call_export`, `trigger_event`.
+  Client ops: `ping`, `position`, `teleport`, `freeze`, `call_native`, `send_nui`,
+  `nui_callback` (POSTs `https://<resource>/<endpoint>` — the exact URL the NUI fetch uses,
+  so a screen's callback can be exercised without a browser).
+
+Why the log is the return path for client results: the RCON capture closes when the command
+handler returns, and a client round-trip is asynchronous by nature. `wait_for_console` /
+the tailer read `MCP_RESULT` lines, which is why `FIVEM_SERVER_LOG` is required for client
+ops. A future bridge version can carry results in-band via a poll (`mcpb poll <id>`);
+until then this is the contract both halves implement and `tests/bridge-*.test.ts` pin.

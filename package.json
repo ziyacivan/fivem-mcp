@@ -1,6 +1,6 @@
 {
   "name": "fivem-mcp-server",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "MCP server that lets AI agents build, run and live-test FiveM servers over DevCon and RCON",
   "license": "MIT",
   "type": "module",
@@ -8,7 +8,7 @@
     "fivem-mcp-server": "dist/index.js"
   },
   "main": "dist/index.js",
-  "files": ["dist", "docs/protocol.md"],
+  "files": ["dist", "bridge", "docs/protocol.md"],
   "engines": {
     "node": ">=22"
   },

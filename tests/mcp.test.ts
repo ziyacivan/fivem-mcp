@@ -72,9 +72,10 @@ afterAll(async () => {
 });
 
 describe("MCP surface", () => {
-  it("exposes the full v0.2 tool surface", async () => {
+  it("exposes the full v0.3 tool surface", async () => {
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
+      "bridge",
       "click",
       "client_command",
       "focus_window",

@@ -15,6 +15,8 @@ export interface Config {
    * builds expose no server-side console socket.
    */
   serverLogFile?: string;
+  /** Must match `mcpb_token` on the server (bridge/ resource). Empty = none set. */
+  mcpbToken?: string;
   /** Console lines kept for the client target. */
   logCapacity: number;
   /** Defaults for client command output capture. */
@@ -57,5 +59,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   };
   if (env.FIVEM_RCON_PASSWORD) config.rconPassword = env.FIVEM_RCON_PASSWORD;
   if (env.FIVEM_SERVER_LOG) config.serverLogFile = env.FIVEM_SERVER_LOG;
+  if (env.FIVEM_MCPB_TOKEN) config.mcpbToken = env.FIVEM_MCPB_TOKEN;
   return config;
 }

@@ -103,7 +103,17 @@ function readWindowPid(a: NonNullable<typeof api>, hwnd: bigint): number {
   return buf.readUInt32LE(0);
 }
 
-/** The FiveM game window: titled "FiveM" (optionally suffixed), visible, with real area. */
+/**
+ * Is this window title the FiveM game window? The game's title is
+ * `FiveM® by Cfx.re - <server>` (or plain `FiveM`); a title merely *starting*
+ * with the letters five-m is not enough — browser tabs open on this very repo
+ * ("fivem-mcp/... - Google Chrome") matched a naive /^FiveM/i once.
+ */
+export function isGameWindowTitle(title: string): boolean {
+  return /^FiveM(?![-_a-z0-9])/i.test(title);
+}
+
+/** The FiveM game window: titled per isGameWindowTitle, visible, with real area. */
 let enumProc: ReturnType<typeof koffi.proto> | null = null;
 
 export function findGameWindow(): GameWindow | null {
@@ -114,7 +124,7 @@ export function findGameWindow(): GameWindow | null {
     if (found) return false;
     if (!a.IsWindowVisible(hwnd)) return true;
     const title = readWindowText(a, hwnd);
-    if (!/^FiveM/i.test(title)) return true;
+    if (!isGameWindowTitle(title)) return true;
     const rect = getWindowRectOf(hwnd);
     if (!rect || rect.right - rect.left < 64) return true;
     found = { hwnd, title, pid: readWindowPid(a, hwnd) };
