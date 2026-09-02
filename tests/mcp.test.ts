@@ -72,17 +72,42 @@ afterAll(async () => {
 });
 
 describe("MCP surface", () => {
-  it("exposes the seven v0.1 tools", async () => {
+  it("exposes the full v0.2 tool surface", async () => {
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
+      "click",
       "client_command",
+      "focus_window",
+      "hold_key",
+      "launch",
       "list_commands",
+      "mouse_move",
+      "press_key",
+      "quit_game",
+      "read_client_log",
       "read_console",
+      "release_key",
+      "restore_focus",
+      "screenshot",
+      "scroll",
       "server_command",
       "server_info",
       "status",
+      "type_text",
+      "wait",
       "wait_for_console",
+      "window_status",
     ]);
+  });
+
+  it("window tools are registered everywhere and report the platform honestly", async () => {
+    const result = await call("window_status", {});
+    if (process.platform === "win32") {
+      expect(JSON.parse(resultText(result))).toHaveProperty("found");
+    } else {
+      expect(result.isError).toBe(true);
+      expect(resultText(result)).toMatch(/win32/);
+    }
   });
 
   it("status reports rcon, the log file and a not-yet-dialed client", async () => {

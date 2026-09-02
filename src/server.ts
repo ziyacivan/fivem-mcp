@@ -1,9 +1,29 @@
+import { once } from "node:events";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { Config } from "./config.js";
 import type { ConsoleLine } from "./console-buffer.js";
 import type { Hub, Target } from "./hub.js";
+import { forceQuitFiveM, latestClientLog, launchFiveM } from "./launcher.js";
+import { ServerLogFile } from "./protocol/server-log.js";
+import { downscaleRgb, encodePng } from "./win/png.js";
+import {
+  bgraToRgb,
+  captureWindow,
+  findGameWindow,
+  focusWindow,
+  foregroundHwnd,
+  getWindowRectOf,
+  holdKey,
+  mouseClick,
+  mouseMove,
+  mouseScroll,
+  pressKey,
+  releaseAllHeld,
+  releaseKey,
+  typeText,
+} from "./win/win32.js";
 
 function text(payload: unknown): CallToolResult {
   return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
@@ -37,7 +57,7 @@ const TARGET_DESCRIPTION =
   "are not console commands.";
 
 export function buildMcpServer(config: Config, hub: Hub): McpServer {
-  const server = new McpServer({ name: "fivem-mcp-server", version: "0.1.0" });
+  const server = new McpServer({ name: "fivem-mcp-server", version: "0.2.0" });
 
   server.registerTool(
     "status",
@@ -279,5 +299,365 @@ export function buildMcpServer(config: Config, hub: Hub): McpServer {
     }),
   );
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // M2 — window automation (Windows only; handlers report it clearly elsewhere)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  let savedForeground: bigint | null = null;
+
+  const ensureGameFocused = () => {
+    const game = findGameWindow();
+    if (!game) {
+      throw new Error(
+        "no FiveM game window found — start the client first (launch tool) and wait for it to reach the game",
+      );
+    }
+    const fg = foregroundHwnd();
+    if (fg !== game.hwnd) {
+      if (savedForeground === null && fg) savedForeground = fg;
+      if (!focusWindow(game.hwnd)) {
+        throw new Error("could not bring the game window to the foreground (Alt-Tab lock?)");
+      }
+    }
+    return game;
+  };
+
+  server.registerTool(
+    "launch",
+    {
+      title: "Start the FiveM client",
+      description:
+        "Launch FiveM, optionally straight into a server via the fivem://connect link. " +
+        "Default target is the configured game port. Returns immediately — watch " +
+        "window_status/client_command to see when the game is up.",
+      inputSchema: {
+        connectTo: z
+          .string()
+          .optional()
+          .describe("host:port to connect to (default: the configured rcon host:port)"),
+      },
+    },
+    guarded(async (args: { connectTo?: string | undefined }) => {
+      const target = args.connectTo ?? `${config.rconHost}:${config.rconPort}`;
+      const result = await launchFiveM(target);
+      return plain(`launched ${result.exe} (pid ${result.pid}) -> fivem://connect/${target}`);
+    }),
+  );
+
+  server.registerTool(
+    "quit_game",
+    {
+      title: "Close the FiveM client",
+      description:
+        "Graceful path: prints 'quit' to the client console over devcon and waits for the " +
+        "game to close (nothing is typed into the window). force: true kills the FiveM " +
+        "process tree instead — use it only when the game is wedged.",
+      inputSchema: { force: z.boolean().optional() },
+    },
+    guarded(async (args: { force?: boolean | undefined }) => {
+      releaseAll();
+      if (args.force) {
+        const code = await forceQuitFiveM();
+        hub.closeAll();
+        return plain(`taskkill exited ${code} (0 = killed)`);
+      }
+      const connection = await hub.ensureClient();
+      const closed = once(connection, "close");
+      connection.print("quit");
+      const winner = await Promise.race([
+        closed.then(() => "closed"),
+        new Promise((r) => setTimeout(() => r("timeout"), 15000)),
+      ]);
+      return plain(
+        winner === "closed"
+          ? "quit accepted — client console socket closed (game is exiting)"
+          : "quit sent but the console socket stayed open for 15s; check window_status or use force",
+      );
+    }),
+  );
+
+  server.registerTool(
+    "window_status",
+    {
+      title: "Game window state",
+      description:
+        "Whether the FiveM game window exists, its title/pid, on-screen rect, and whether " +
+        "it is the foreground window. Input/screenshot tools focus it automatically.",
+      inputSchema: {},
+    },
+    guarded(async () => {
+      const game = findGameWindow();
+      if (!game) return text({ found: false, focused: false });
+      const rect = getWindowRectOf(game.hwnd);
+      return text({
+        found: true,
+        title: game.title,
+        pid: game.pid,
+        rect,
+        focused: foregroundHwnd() === game.hwnd,
+      });
+    }),
+  );
+
+  server.registerTool(
+    "focus_window",
+    {
+      title: "Bring the game to the foreground",
+      description:
+        "Restores/minimizes-out if needed and steals foreground (remembering the previous " +
+        "window for restore_focus). Every input/screenshot tool calls this automatically.",
+      inputSchema: {},
+    },
+    guarded(async () => {
+      const game = ensureGameFocused();
+      return plain(`focused '${game.title}' (pid ${game.pid})`);
+    }),
+  );
+
+  server.registerTool(
+    "restore_focus",
+    {
+      title: "Give focus back to the previous window",
+      description:
+        "Returns foreground to whatever window was focused before this tool focused the game.",
+      inputSchema: {},
+    },
+    guarded(async () => {
+      if (savedForeground === null) return plain("nothing saved — the game was already foreground");
+      const back = focusWindow(savedForeground);
+      const target = savedForeground;
+      savedForeground = null;
+      return plain(
+        back ? `restored focus to window ${target}` : `could not restore focus to ${target}`,
+      );
+    }),
+  );
+
+  server.registerTool(
+    "screenshot",
+    {
+      title: "Capture the game window",
+      description:
+        "PNG of the FiveM window (PrintWindow with PW_RENDERFULLCONTENT; falls back to a " +
+        "screen BitBlt of the window rect when the swapchain returns black, which means " +
+        "whatever covers the window is also captured — the game is focused first). " +
+        "Downscaled so vision models can read it cheaply.",
+      inputSchema: {
+        maxSide: z
+          .number()
+          .int()
+          .min(320)
+          .max(4096)
+          .optional()
+          .describe("Downscale longest side (default 1280)"),
+      },
+    },
+    guarded(async (args: { maxSide?: number | undefined }) => {
+      const game = ensureGameFocused();
+      const frame = captureWindow(game.hwnd);
+      const rgb = bgraToRgb(frame.pixels);
+      const scaled = downscaleRgb(rgb, frame.width, frame.height, args.maxSide ?? 1280);
+      const png = encodePng(scaled.width, scaled.height, scaled.rgb);
+      return {
+        content: [
+          { type: "image", data: png.toString("base64"), mimeType: "image/png" },
+          {
+            type: "text",
+            text: `captured ${frame.width}x${frame.height} via ${frame.method} -> ${scaled.width}x${scaled.height} png; brightness ${(frame.brightness * 100).toFixed(0)}%`,
+          },
+        ],
+      };
+    }),
+  );
+
+  const KEY_DOC =
+    "Key name: W A S D E F Q space enter esc tab shift ctrl alt arrows up down left right, f1-f12, letters/digits.";
+
+  server.registerTool(
+    "press_key",
+    {
+      title: "Tap a key",
+      description: `Press and release a key (scan codes — what GTA's DirectInput/raw input reads). ${KEY_DOC}`,
+      inputSchema: {
+        key: z.string(),
+        holdMs: z.number().int().min(0).max(5000).optional().describe("Hold duration (default 20)"),
+      },
+    },
+    guarded(async (args: { key: string; holdMs?: number | undefined }) => {
+      ensureGameFocused();
+      pressKey(args.key, args.holdMs);
+      return plain(`tapped ${args.key}`);
+    }),
+  );
+
+  server.registerTool(
+    "hold_key",
+    {
+      title: "Hold a key down",
+      description: `Key stays pressed until release_key. Use for movement (W) and camera. ${KEY_DOC} Held keys are released if this process exits.`,
+      inputSchema: { key: z.string() },
+    },
+    guarded(async (args: { key: string }) => {
+      ensureGameFocused();
+      holdKey(args.key);
+      return plain(`holding ${args.key}`);
+    }),
+  );
+
+  server.registerTool(
+    "release_key",
+    {
+      title: "Release held key(s)",
+      description: "Release one held key, or all of them with key='all'.",
+      inputSchema: { key: z.string() },
+    },
+    guarded(async (args: { key: string }) => {
+      if (args.key.toLowerCase() === "all") {
+        const released = releaseAll();
+        return plain(released.length ? `released ${released.join(", ")}` : "nothing held");
+      }
+      releaseKey(args.key);
+      return plain(`released ${args.key}`);
+    }),
+  );
+
+  server.registerTool(
+    "type_text",
+    {
+      title: "Type literal text",
+      description:
+        "Sends Unicode key events — the F8 console and chat/NUI inputs read these " +
+        "normally. Open the target input first (e.g. client_command to focus, or a chat " +
+        "key like T). Does not press Enter.",
+      inputSchema: { text: z.string() },
+    },
+    guarded(async (args: { text: string }) => {
+      ensureGameFocused();
+      typeText(args.text);
+      return plain(`typed ${args.text.length} chars`);
+    }),
+  );
+
+  server.registerTool(
+    "mouse_move",
+    {
+      title: "Move the mouse",
+      description:
+        "Relative dx/dy drives the in-game camera; absolute x/y (screen pixels) positions " +
+        "the real cursor for NUI elements.",
+      inputSchema: {
+        dx: z.number().int().optional(),
+        dy: z.number().int().optional(),
+        x: z.number().int().optional(),
+        y: z.number().int().optional(),
+      },
+    },
+    guarded(
+      async (args: {
+        dx?: number | undefined;
+        dy?: number | undefined;
+        x?: number | undefined;
+        y?: number | undefined;
+      }) => {
+        ensureGameFocused();
+        mouseMove(args);
+        return plain(
+          `mouse ${args.x !== undefined ? `-> (${args.x},${args.y})` : `by (${args.dx ?? 0},${args.dy ?? 0})`}`,
+        );
+      },
+    ),
+  );
+
+  server.registerTool(
+    "click",
+    {
+      title: "Mouse click",
+      description:
+        "Click at the current cursor position (position it with mouse_move absolute first for NUI).",
+      inputSchema: {
+        button: z.enum(["left", "right"]).optional().describe("default left"),
+        double: z.boolean().optional(),
+      },
+    },
+    guarded(
+      async (args: { button?: "left" | "right" | undefined; double?: boolean | undefined }) => {
+        ensureGameFocused();
+        mouseClick(args.button ?? "left", args.double ?? false);
+        return plain(`${args.button ?? "left"} click`);
+      },
+    ),
+  );
+
+  server.registerTool(
+    "scroll",
+    {
+      title: "Mouse wheel",
+      description: "Scroll the wheel (positive = up). NUI lists respond to it.",
+      inputSchema: { amount: z.number().int().min(-50).max(50) },
+    },
+    guarded(async (args: { amount: number }) => {
+      ensureGameFocused();
+      mouseScroll(args.amount);
+      return plain(`scrolled ${args.amount}`);
+    }),
+  );
+
+  server.registerTool(
+    "wait",
+    {
+      title: "Pause",
+      description: "Sleep between actions — loading screens, walk cycles, held-key sequences.",
+      inputSchema: { ms: z.number().int().min(0).max(120000) },
+    },
+    guarded(async (args: { ms: number }) => {
+      await new Promise((r) => setTimeout(r, args.ms));
+      return plain(`waited ${args.ms}ms`);
+    }),
+  );
+
+  server.registerTool(
+    "read_client_log",
+    {
+      title: "Read the FiveM client log file",
+      description:
+        "Tail the newest CitizenFX_log_*.log under the FiveM install — the same stream as " +
+        "read_console(client) but persisted across sessions, without the channel tags.",
+      inputSchema: {
+        limit: z.number().int().positive().max(1000).optional().describe("default 100"),
+        contains: z.string().optional(),
+        pattern: z.string().optional(),
+      },
+    },
+    guarded(
+      async (args: {
+        limit?: number | undefined;
+        contains?: string | undefined;
+        pattern?: string | undefined;
+      }) => {
+        const file = latestClientLog();
+        if (!file) {
+          throw new Error(
+            "no CitizenFX_log_*.log found — is FiveM installed, and where? (checked %LOCALAPPDATA%\\FiveM\\FiveM.app\\logs)",
+          );
+        }
+        const lines = await new ServerLogFile(file).tail({
+          limit: args.limit ?? 100,
+          contains: args.contains,
+          pattern: args.pattern,
+        });
+        return text({
+          file,
+          matched: lines.length,
+          lines: lines.map((l) => `${l.channel ? `[${l.channel}] ` : ""}${l.message}`),
+        });
+      },
+    ),
+  );
+
   return server;
+}
+
+function releaseAll(): string[] {
+  // Local alias so the guarded closures don't capture the win32 module directly.
+  return releaseAllHeld();
 }

@@ -1,6 +1,6 @@
 {
   "name": "fivem-mcp-server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP server that lets AI agents build, run and live-test FiveM servers over DevCon and RCON",
   "license": "MIT",
   "type": "module",
@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.15.0",
+    "koffi": "^3.1.6",
     "zod": "^3.24.1"
   },
   "devDependencies": {

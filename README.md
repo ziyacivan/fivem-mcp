@@ -19,8 +19,11 @@ fivem-mcp-server ──► UDP RCON / getinfo ──► FXServer (game port, e.g
 
 ## Status
 
-v0.1 covers the server side and the client console. Keyboard/mouse/screenshot
-control of the game window is on the [roadmap](docs/plan.md).
+v0.2 drives the whole loop: server console (RCON), client F8 console (devcon), the game
+window (launch, focus, screenshot, keyboard/mouse). All of it live-verified against a real
+FXServer + FiveM Legacy client on 2026-09-02 — including screenshots that correctly capture
+the running game. The in-game bridge resource (native calls, chat commands from the outside)
+is the next milestone; see [docs/plan.md](docs/plan.md).
 
 ## Requirements
 
@@ -30,6 +33,8 @@ control of the game window is on the [roadmap](docs/plan.md).
 - A running FXServer you administer (`rcon_password` set for `server_command`).
 - The Legacy FiveM client for the client-console tools (Enhanced removed the
   client devcon ports; see [docs/protocol.md](docs/protocol.md)).
+- The keyboard/mouse/screenshot tools are **Windows-only** and run on the machine
+  with the game. On other platforms every tool except those is served normally.
 
 ## Install
 
@@ -86,6 +91,16 @@ or in any client's JSON config:
 | `read_console` | Recent lines: client = live devcon stream (with `afterSeq` paging), server = tail of `FIVEM_SERVER_LOG`. Filter by `channel`/`contains`/`pattern`. |
 | `wait_for_console` | Block until a line matching a regex appears — your assertion primitive. |
 | `list_commands` | Every command the client console knows (devcon handshake). |
+| `launch` | Start FiveM, optionally straight into `host:port` (default: the configured server). |
+| `quit_game` | Graceful `quit` over devcon; `force` kills the FiveM process tree. |
+| `window_status` | Game window existence, title, pid, rect, foreground state. |
+| `focus_window` / `restore_focus` | Bring the game forward / give focus back to your window. Input tools focus automatically. |
+| `screenshot` | PNG of the game window (PrintWindow with screen-BitBlt fallback), downscaled for vision models. |
+| `press_key` / `hold_key` / `release_key` | Real scan-code input — GTA's DirectInput ignores VK-only injection. Held keys are released if the process dies. |
+| `type_text` | Literal Unicode events — the channel the F8 console and chat NUI read. |
+| `mouse_move` / `click` / `scroll` | Relative moves drive the camera; absolute coordinates position the cursor for NUI. |
+| `wait` | Pause between actions (loading screens, walk cycles). |
+| `read_client_log` | The newest `CitizenFX_log_*.log` from the FiveM install. |
 
 ## Typical loop (what an agent does)
 
@@ -111,7 +126,7 @@ or in any client's JSON config:
 ## Development
 
 ```sh
-pnpm test        # vitest — 52 tests, incl. fake devcon/rcon servers
+pnpm test        # vitest — 69 tests, incl. fake devcon/rcon servers and byte-level SendInput/PNG checks
 pnpm typecheck
 pnpm check       # biome
 pnpm build       # -> dist/

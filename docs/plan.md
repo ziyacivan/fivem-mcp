@@ -13,34 +13,36 @@
   the rcon reply format, the getinfo response incl. the `challenge > 8 bytes` drop rule,
   and the **absence** of the server-side devcon 29100 socket
 
-## M2 — drive the game window (the actual "in-game" half)
+## M2 — drive the game window (IMPLEMENTED, live-verified 2026-09-02)
 
-Windows-only helpers, FFI via `koffi` (no native build step):
+Windows-only helpers via `koffi` (prebuilt FFI, no compile step):
 
-* `launch` / `quit` — start FiveM (`%LOCALAPPDATA%\FiveM\FiveM.exe`), `fivem://connect/host:port`
-* window status / focus / restore (GTA reads DirectInput — the window must be foreground for input)
-* `press_key` / `hold_key` / `release_key` — **scan codes**, not VK codes (DirectInput/raw input
-  ignores VK-only injection)
-* `type_text` — Unicode events (the F8 console and chat NUI read those fine)
-* `mouse_move` (relative = camera, absolute = cursor for NUI) / `click` / `scroll`
-* `screenshot` — PNG of the game window (PrintWindow; fall back to BitBlt of the screen while
-  focused; a black capture means the swapchain ignored PrintWindow — documented failure mode)
-* `read_client_log` — tail of `CitizenFX_log_*.log` from the FiveM install
+* `launch` / `quit_game` — FiveM.exe found at `%LOCALAPPDATA%\FiveM\FiveM.exe`
+  (`FIVEM_EXECUTABLE` overrides); connect link built as `fivem://connect/host:port`;
+  graceful quit through the devcon `quit` command, `force` via `taskkill /T`
+* `window_status` / `focus_window` / `restore_focus` — real window found:
+  `FiveM® by Cfx.re - <hostname>` (title regex `^FiveM`)
+* `screenshot` — PrintWindow(`PW_RENDERFULLCONTENT`) + screen-BitBlt fallback + PNG encode
+  (node zlib, no native image dep), downscaled to 1280 max side
+* `press_key` / `hold_key` / `release_key` (scan codes; held keys released on exit),
+  `type_text` (KEYEVENTF_UNICODE), `mouse_move` / `click` / `scroll`
+* `wait`, `read_client_log` (newest `CitizenFX_log_*.log`)
+
+Live evidence (the actual session, 2026-09-02): screenshot at 98% brightness showing
+the breeze character-selection screen; `press_key f8` opened the real F8 console whose
+buffer streamed `[breeze-multichar] screen open`, `[breeze-chat] client ready`; devcon
+`quit` closed the game cleanly.
 
 Field-test checklist:
 
-* [x] client devcon handshake on 29200 (Legacy) — AINF/CHAN arrive (23 channels incl.
-      `glue`, `gta-core-five`, `legitimacy`…), the game process owns the socket,
-      the F8 console streams via PRNT — verified live 2026-09-02
-* [x] `CMND` execution: `connect <host>` ran in-game and answered
-      `[glue] Ignoring ConnectTo because we're already connecting/connected.`
-      — which also uncovered the trailing-byte rule (`"\n"`, not NUL; see protocol.md §3.3)
-* [x] **new finding:** devcon reaches the *console* command context only. RegisterCommand
-      chat commands are a separate system — driving them needs the M2 input tools (chat UI)
-      or the M3 bridge; `server_command`/RCON already runs them with `system.console` privileges
-* [ ] SendInput reaches GTA (movement, camera) while focused; `release_key all` on exit
-* [ ] screenshot returns the game, not the desktop
-* [ ] elevation trap: FiveM as admin + tool as normal user ⇒ SendInput silently dropped (UIPI)
+* [x] client devcon handshake on 29200 (Legacy) — AINF/CHAN arrive, F8 lines stream via PRNT
+* [x] `CMND` echo + execution (`connect` answered `[glue] Ignoring ConnectTo…`;
+      uncovered the trailing-byte rule — `"\n"`, not NUL; see protocol.md §3.3)
+* [x] window focus + screenshot not black (PrintWindow path, 1616x939)
+* [x] SendInput reaches GTA — F8 tap opened and closed the real console
+* [x] graceful `quit` over devcon closes the game
+* [ ] elevation trap: FiveM as admin + tool as normal user ⇒ SendInput silently dropped
+      (UIPI) — the error text covers it, not yet observed in the wild
 
 ## M3 — optional bridge resource (`fivem-mcp-bridge`, our own, MIT)
 
