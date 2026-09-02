@@ -68,12 +68,18 @@ runtime has **no `GetPlayerIdentifiers` global** (guarded, returns null), and th
 bootstrapper window is also titled `FiveM` (game-window detection now requires the
 `by Cfx.re` title pattern; `/^FiveM/i` alone matched a browser tab open on this repo).
 
-## M4 — polish
+## M4 — polish & distribution
 
-* NUI inspection via CDP (`chrome-devtools` over the CEF debug port) if/when measurable
-* txAdmin live-console fallback when `FIVEM_SERVER_LOG` is not available
-* MCP prompts: "test a breeze slice end-to-end", "verify a resource starts clean"
-* npm publish (`fivem-mcp-server`) + version tags
+* [x] npm metadata: repository/keywords/homepage/bugs, `mcpName`
+      (`io.github.ziyacivan/fivem-mcp`) and `prepublishOnly` gate
+* [x] `server.json` for the MCP Registry (schema 2025-12-11, stdio, env-var docs)
+* [x] MCP prompts: `test_resource` (the live-verified end-to-end playbook) and
+      `smoke_check` (one-pass health sweep)
+* [x] git tags v0.3.0 / v0.4.0, repository made public
+* [ ] `npm publish` (needs `npm login` — the package name fivem-mcp-server is free)
+* [ ] `mcp-publisher login github && mcp-publisher publish` (after the npm publish)
+* [ ] txAdmin live-console fallback when `FIVEM_SERVER_LOG` is not available
+* [ ] NUI inspection via CDP if/when the CEF debug port proves measurable
 
 ## Non-goals
 

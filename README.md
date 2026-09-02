@@ -19,11 +19,10 @@ fivem-mcp-server ──► UDP RCON / getinfo ──► FXServer (game port, e.g
 
 ## Status
 
-v0.2 drives the whole loop: server console (RCON), client F8 console (devcon), the game
-window (launch, focus, screenshot, keyboard/mouse). All of it live-verified against a real
-FXServer + FiveM Legacy client on 2026-09-02 — including screenshots that correctly capture
-the running game. The in-game bridge resource (native calls, chat commands from the outside)
-is the next milestone; see [docs/plan.md](docs/plan.md).
+v0.4 drives the whole loop: server console (RCON), client F8 console (devcon), the game
+window (launch, focus, screenshot, keyboard/mouse) and an in-game bridge (`mcpb`) for
+natives, exports and NUI callbacks — plus ready-made test prompts. All of it live-verified
+against a real FXServer + FiveM Legacy client (see `docs/plan.md` and `scripts/live-*.mjs`).
 
 ## Requirements
 
@@ -104,6 +103,16 @@ or in any client's JSON config:
 | `read_client_log` | The newest `CitizenFX_log_*.log` from the FiveM install. |
 | `bridge` | Invoke the `mcpb` bridge resource: player list, any resource export, event triggering (server half) and client natives, teleport, freeze, `SendNUIMessage`, NUI callback calls (client half). |
 
+## Prompts
+
+Two workflows are shipped as MCP prompts, distilled from the live-verified loops:
+
+- **`test_resource(resource, expectations?)`** — clean restart → console error scan →
+  client-half scan → in-game scenario (keys, screenshot, bridge state) → evidence-backed
+  PASS/FAIL report where anything unverifiable is said so out loud.
+- **`smoke_check`** — one fast sweep: connections, which server, error tails on both sides,
+  window + screenshot, persisted client log. OK/WARN/DOWN per line.
+
 ## The bridge resource (`bridge/`)
 
 Client-side testing (natives, NUI callbacks, position) is outside what devcon and RCON can
@@ -153,11 +162,16 @@ bridge off anything you care about. The full wire contract: [docs/protocol.md §
 ## Development
 
 ```sh
-pnpm test        # vitest — 69 tests, incl. fake devcon/rcon servers and byte-level SendInput/PNG checks
+pnpm test        # vitest — 102 tests: fake devcon/rcon servers, byte-level SendInput/PNG checks, bridge contract
 pnpm typecheck
 pnpm check       # biome
 pnpm build       # -> dist/
+pnpm ci          # all of the above
 ```
+
+Releasing: bump `package.json` (and `server.json`) version, tag `vX.Y.Z`, `npm publish`
+(`prepublishOnly` runs the full gate), then `mcp-publisher publish` for the MCP Registry —
+`server.json` + the `mcpName` field in `package.json` are the registry's ownership markers.
 
 The wire protocol (DevCon frames, RCON/getinfo OOB datagrams, the Cfx string hash)
 is documented byte-by-byte in [docs/protocol.md](docs/protocol.md), derived from the

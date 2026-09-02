@@ -1,0 +1,58 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.ziyacivan/fivem-mcp",
+  "title": "FiveM MCP",
+  "description": "Build, run and live-test FiveM servers from an AI agent: server console over RCON, the client F8 console over DevCon, the game window (launch, focus, screenshot, keyboard/mouse) and natives/NUI via the mcpb bridge. Protocol reverse-engineered from open-source CitizenFX and live-verified against a real FXServer and Legacy client.",
+  "repository": {
+    "url": "https://github.com/ziyacivan/fivem-mcp",
+    "source": "github"
+  },
+  "version": "0.4.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "fivem-mcp-server",
+      "version": "0.4.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "FIVEM_HOST",
+          "description": "Machine running the FiveM client (DevCon host). Default 127.0.0.1",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "FIVEM_RCON_ADDRESS",
+          "description": "FXServer game host:port for RCON/getinfo. Default <FIVEM_HOST>:30120",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "FIVEM_RCON_PASSWORD",
+          "description": "Matches rcon_password in server.cfg; required for server_command and the bridge",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "FIVEM_SERVER_LOG",
+          "description": "Path to FXServer's redirected stdout (server.log); enables server-side console reads and bridge client results",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "FIVEM_MCPB_TOKEN",
+          "description": "Matches mcpb_token on the server when the bridge resource is configured with one",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

@@ -1,14 +1,34 @@
 {
   "name": "fivem-mcp-server",
-  "version": "0.3.0",
-  "description": "MCP server that lets AI agents build, run and live-test FiveM servers over DevCon and RCON",
+  "version": "0.4.0",
+  "mcpName": "io.github.ziyacivan/fivem-mcp",
+  "description": "MCP server that lets AI agents build, run and live-test FiveM servers over DevCon, RCON and the mcpb bridge",
   "license": "MIT",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ziyacivan/fivem-mcp.git"
+  },
+  "homepage": "https://github.com/ziyacivan/fivem-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/ziyacivan/fivem-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "fivem",
+    "gta5",
+    "cfx",
+    "rcon",
+    "devcon",
+    "game-testing",
+    "ai-agents"
+  ],
   "bin": {
     "fivem-mcp-server": "dist/index.js"
   },
   "main": "dist/index.js",
-  "files": ["dist", "bridge", "docs/protocol.md"],
+  "files": ["dist", "bridge", "server.json", "docs/protocol.md"],
   "engines": {
     "node": ">=22"
   },
@@ -19,7 +39,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "build": "tsc -p tsconfig.build.json",
-    "ci": "pnpm run check && pnpm run typecheck && pnpm run test && pnpm run build"
+    "ci": "pnpm run check && pnpm run typecheck && pnpm run test && pnpm run build",
+    "prepublishOnly": "pnpm run ci"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.15.0",

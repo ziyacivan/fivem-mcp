@@ -111,6 +111,23 @@ describe("MCP surface", () => {
     }
   });
 
+  it("offers the live-verification prompts", async () => {
+    const { prompts } = await client.listPrompts();
+    expect(prompts.map((prompt) => prompt.name).sort()).toEqual(["smoke_check", "test_resource"]);
+
+    const got = await client.getPrompt({
+      name: "test_resource",
+      arguments: { resource: "breeze-chat", expectations: "the chat window must open" },
+    });
+    const text = JSON.stringify(got.messages);
+    expect(text).toContain("breeze-chat");
+    expect(text).toContain("chat window must open");
+    expect(text).toContain("wait_for_console");
+
+    const sweep = await client.getPrompt({ name: "smoke_check", arguments: {} });
+    expect(JSON.stringify(sweep.messages)).toContain("server_info");
+  });
+
   it("status reports rcon, the log file and a not-yet-dialed client", async () => {
     const payload = JSON.parse(resultText(await call("status", {})));
     expect(payload.server.rcon).toMatchObject({ configured: true });
