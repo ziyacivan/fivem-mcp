@@ -1,5 +1,9 @@
 # fivem-mcp
 
+[![npm version](https://img.shields.io/npm/v/fivem-mcp-server)](https://www.npmjs.com/package/fivem-mcp-server)
+[![license: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/ziyacivan/fivem-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/ziyacivan/fivem-mcp/actions/workflows/ci.yml)
+
 An MCP (Model Context Protocol) server that lets AI agents — Claude, Qwen, or anything
 that speaks MCP — **build, run and live-test FiveM servers** from the same machine.
 
@@ -23,6 +27,18 @@ v0.4 drives the whole loop: server console (RCON), client F8 console (devcon), t
 window (launch, focus, screenshot, keyboard/mouse) and an in-game bridge (`mcpb`) for
 natives, exports and NUI callbacks — plus ready-made test prompts. All of it live-verified
 against a real FXServer + FiveM Legacy client (see `docs/plan.md` and `scripts/live-*.mjs`).
+
+## Where it is published
+
+| Channel | Address |
+| --- | --- |
+| npm | [fivem-mcp-server](https://www.npmjs.com/package/fivem-mcp-server) — `npx -y fivem-mcp-server` |
+| MCP Registry | `io.github.ziyacivan/fivem-mcp` ([registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io)) |
+| Source releases | [GitHub Releases](https://github.com/ziyacivan/fivem-mcp/releases), tagged `vX.Y.Z` |
+
+The repository's GitHub **Packages** sidebar is deliberately empty: the artifact lives on
+npmjs.com, not GitHub Packages — the latter would force a scoped `@ziyacivan/` package name
+and a second registry for no benefit.
 
 ## Requirements
 
