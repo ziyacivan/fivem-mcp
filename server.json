@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.ziyacivan/fivem-mcp",
   "title": "FiveM MCP",
-  "description": "Build, run and live-test FiveM servers from an AI agent: server console over RCON, the client F8 console over DevCon, the game window (launch, focus, screenshot, keyboard/mouse) and natives/NUI via the mcpb bridge. Protocol reverse-engineered from open-source CitizenFX and live-verified against a real FXServer and Legacy client.",
+  "description": "Build, run and live-test FiveM servers with AI agents: RCON, DevCon, window control, mcpb bridge.",
   "repository": {
     "url": "https://github.com/ziyacivan/fivem-mcp",
     "source": "github"
