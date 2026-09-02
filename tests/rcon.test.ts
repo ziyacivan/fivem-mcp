@@ -1,0 +1,82 @@
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  RconClient,
+  RconError,
+  encodeRconRequest,
+  parseRconResponse,
+} from "../src/protocol/rcon.js";
+import { FakeRconServer } from "./helpers/fake-rcon.js";
+
+const cleanups: Array<() => Promise<void>> = [];
+afterEach(async () => {
+  while (cleanups.length > 0) await cleanups.pop()?.();
+});
+
+describe("wire format", () => {
+  it("request is 0xFFFFFFFF + 'rcon\\n<password> <command>'", () => {
+    const request = encodeRconRequest("s3cret", "status");
+    expect(request.subarray(0, 4).equals(Buffer.from([0xff, 0xff, 0xff, 0xff]))).toBe(true);
+    expect(request.subarray(4).toString("utf8")).toBe("rcon\ns3cret status");
+  });
+
+  it("parses print and error responses, with and without the OOB prefix", () => {
+    const prefix = Buffer.from([0xff, 0xff, 0xff, 0xff]);
+    expect(parseRconResponse(Buffer.concat([prefix, Buffer.from("print ok\n")]))).toEqual({
+      kind: "print",
+      text: "ok\n",
+    });
+    expect(parseRconResponse(Buffer.from("error Invalid connection."))).toEqual({
+      kind: "error",
+      text: "Invalid connection.",
+    });
+    expect(() => parseRconResponse(Buffer.from("garbage"))).toThrow(/unrecognized/);
+  });
+});
+
+describe("RconClient", () => {
+  it("sends the exact request bytes and resolves the printed output", async () => {
+    const server = new FakeRconServer("s3cret");
+    const port = await server.listen();
+    cleanups.push(() => server.close());
+
+    const client = new RconClient({ host: "127.0.0.1", port, password: "s3cret" });
+    await expect(client.exec("status")).resolves.toBe("ran: status");
+    expect(server.receivedRequests[0]?.equals(encodeRconRequest("s3cret", "status"))).toBe(true);
+  });
+
+  it("serializes concurrent commands", async () => {
+    const server = new FakeRconServer("pw", (command) => `out:${command}`);
+    const port = await server.listen();
+    cleanups.push(() => server.close());
+
+    const client = new RconClient({ host: "127.0.0.1", port, password: "pw" });
+    const results = await Promise.all([client.exec("one"), client.exec("two")]);
+    expect(results).toEqual(["out:one", "out:two"]);
+    expect(server.receivedRequests).toHaveLength(2);
+  });
+
+  it("reports wrong passwords as plain text (the server replies 'print Invalid password.')", async () => {
+    const server = new FakeRconServer("right");
+    const port = await server.listen();
+    cleanups.push(() => server.close());
+
+    const client = new RconClient({ host: "127.0.0.1", port, password: "wrong" });
+    await expect(client.exec("status")).resolves.toMatch(/Invalid password/);
+  });
+
+  it("refuses to send without a configured password", async () => {
+    const client = new RconClient({ host: "127.0.0.1", port: 1, password: "" });
+    expect(client.isConfigured).toBe(false);
+    await expect(client.exec("status")).rejects.toThrow(/password/);
+  });
+
+  it("times out against a silent server", async () => {
+    const server = new FakeRconServer("pw");
+    server.mode = "silent";
+    const port = await server.listen();
+    cleanups.push(() => server.close());
+
+    const client = new RconClient({ host: "127.0.0.1", port, password: "pw", timeoutMs: 200 });
+    await expect(client.exec("status")).rejects.toThrow(RconError);
+  });
+});

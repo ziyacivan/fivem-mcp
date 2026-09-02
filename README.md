@@ -1,1 +1,129 @@
 # fivem-mcp
+
+An MCP (Model Context Protocol) server that lets AI agents — Claude, Qwen, or anything
+that speaks MCP — **build, run and live-test FiveM servers** from the same machine.
+
+It is the missing test layer for the "did it actually work in-game?" question: the agent
+can run real console commands, watch both the server log and the *live F8 console of a
+running FiveM client*, wait for specific output, and react — without you touching the
+keyboard.
+
+```
+agent (Claude / Qwen / …)
+   │  MCP over stdio
+   ▼
+fivem-mcp-server ──► UDP RCON / getinfo ──► FXServer (game port, e.g. 30120)
+                   ──► TCP devcon (29200/29300) ──► FiveM Legacy client F8 console
+                   ──► tail ─────────────────────► FXServer's redirected stdout log
+```
+
+## Status
+
+v0.1 covers the server side and the client console. Keyboard/mouse/screenshot
+control of the game window is on the [roadmap](docs/plan.md).
+
+## Requirements
+
+- Node 22+ (Windows, macOS or Linux for the server side; the client devcon works
+  wherever the FiveM client runs — this tool must run on that machine for the
+  `client_*` tools since devcon binds to localhost by default).
+- A running FXServer you administer (`rcon_password` set for `server_command`).
+- The Legacy FiveM client for the client-console tools (Enhanced removed the
+  client devcon ports; see [docs/protocol.md](docs/protocol.md)).
+
+## Install
+
+```sh
+git clone https://github.com/ziyacivan/fivem-mcp
+cd fivem-mcp
+pnpm install && pnpm build
+```
+
+Register with your MCP client, e.g. Claude Code:
+
+```sh
+claude mcp add fivem -- env FIVEM_RCON_PASSWORD=yourpw node /path/to/fivem-mcp/dist/index.js
+```
+
+or in any client's JSON config:
+
+```json
+{
+  "mcpServers": {
+    "fivem": {
+      "command": "node",
+      "args": ["/path/to/fivem-mcp/dist/index.js"],
+      "env": {
+        "FIVEM_RCON_PASSWORD": "yourpw",
+        "FIVEM_SERVER_LOG": "C:\\FXServer\\my-data\\server.log"
+      }
+    }
+  }
+}
+```
+
+## Configuration (environment)
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `FIVEM_HOST` | `127.0.0.1` | Machine running the FiveM client (devcon host) |
+| `FIVEM_CLIENT_DEVCON_PORT` | `29200` then `29300` | Override the client devcon port |
+| `FIVEM_RCON_ADDRESS` | `FIVEM_HOST:30120` | FXServer game port (UDP RCON + getinfo) |
+| `FIVEM_RCON_PASSWORD` | — | Matches `rcon_password` in `server.cfg`; needed by `server_command` |
+| `FIVEM_SERVER_LOG` | — | Path to FXServer's redirected stdout; enables server-side `read_console` / `wait_for_console` |
+| `FIVEM_CONSOLE_CAPACITY` | `5000` | Client console lines kept in the ring buffer |
+| `FIVEM_QUIET_MS` | `400` | Consider command output done after this quiet period |
+| `FIVEM_COMMAND_TIMEOUT_MS` | `5000` | Default max wait for `client_command` output |
+
+## Tools
+
+| Tool | What it does |
+| --- | --- |
+| `status` | Connection state: RCON, log file, client devcon. Call first. |
+| `server_info` | `getinfo` over UDP — hostname, players, max clients, protocol, game build. **No credentials needed.** |
+| `server_command` | Any server console command over UDP RCON; returns the captured output. |
+| `client_command` | Types into the F8 console of a running Legacy client over devcon (nothing steals focus). This is the **local console command** layer — `connect`, `quit`, tooling; `RegisterCommand` chat commands are a different system (use `server_command`, which runs with console privileges, or the planned input/bridge tools). Returns the console lines it printed. |
+| `read_console` | Recent lines: client = live devcon stream (with `afterSeq` paging), server = tail of `FIVEM_SERVER_LOG`. Filter by `channel`/`contains`/`pattern`. |
+| `wait_for_console` | Block until a line matching a regex appears — your assertion primitive. |
+| `list_commands` | Every command the client console knows (devcon handshake). |
+
+## Typical loop (what an agent does)
+
+1. `server_command: "ensure my-resource"`
+2. `wait_for_console: target=server, pattern="Started resource my-resource|Error"`
+3. `client_command: "connect localhost:30120"` drives the join itself, then
+   `read_console: target=client` catches client-side console output that never
+   reaches the server log.
+
+## Security notes — read before exposing anything
+
+- **The client devcon socket has no authentication.** Anyone who can reach it can run
+  local console commands in that game client (connect, quit, ...). FiveM binds it to
+  `127.0.0.1` unless the client is started with `-devcon` (then `0.0.0.0`); this tool
+  assumes the loopback default and never needs more. Do not tunnel it.
+- **RCON is the server's admin root.** Keep `rcon_password` strong; `FIVEM_RCON_PASSWORD`
+  lives in your MCP config — protect that file the same way.
+- FXServer itself has no server-side devcon socket on current builds (verified
+  2026-09-02), which is why the server half is RCON + log tail.
+- Treat `server_command` as giving the agent root on your box the moment it can
+  `exec` anything; run it only against **development** servers.
+
+## Development
+
+```sh
+pnpm test        # vitest — 52 tests, incl. fake devcon/rcon servers
+pnpm typecheck
+pnpm check       # biome
+pnpm build       # -> dist/
+```
+
+The wire protocol (DevCon frames, RCON/getinfo OOB datagrams, the Cfx string hash)
+is documented byte-by-byte in [docs/protocol.md](docs/protocol.md), derived from the
+open-source CitizenFX server, `citizenfx/fivem@03dcc562`. Live-verified: RCON reply
+format, `getinfo` response and the `>8`-byte challenge drop were confirmed against a
+real FXServer on 2026-09-02.
+
+## License
+
+MIT. The FiveM/CitizenFX name is a trademark of Cfx.re; this project is not affiliated
+with or endorsed by Cfx.re.

@@ -1,0 +1,34 @@
+{
+  "name": "fivem-mcp-server",
+  "version": "0.1.0",
+  "description": "MCP server that lets AI agents build, run and live-test FiveM servers over DevCon and RCON",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "fivem-mcp-server": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": ["dist", "docs/protocol.md"],
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "check": "biome ci .",
+    "format": "biome check --write .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.build.json",
+    "ci": "pnpm run check && pnpm run typecheck && pnpm run test && pnpm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.15.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
