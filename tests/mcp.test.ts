@@ -140,6 +140,15 @@ describe("MCP surface", () => {
     expect(resultText(result)).toContain("rcon ran who");
   });
 
+  it("rejects multi-line commands (newline = second command smuggled into the payload)", async () => {
+    const server = await call("server_command", { command: "status\nstop mapmanager" });
+    expect(server.isError).toBe(true);
+    expect(resultText(server)).toMatch(/single line/);
+    const client = await call("client_command", { command: "connect x\rquit" });
+    expect(client.isError).toBe(true);
+    expect(rconFake.receivedRequests.some((b) => b.toString().includes("mapmanager"))).toBe(false);
+  });
+
   it("server_info answers without any credentials", async () => {
     const payload = JSON.parse(resultText(await call("server_info", {})));
     expect(payload.hostname).toBe("fake test server");

@@ -248,9 +248,14 @@ export class DevconConnection extends EventEmitter {
     }
   }
 
-  /** Connect and resolve once the AINF handshake frame has arrived. */
+  /**
+   * Connect and resolve once the AINF handshake frame has arrived. The same
+   * `connectTimeoutMs` bounds the whole handshake, not just the TCP connect:
+   * a port that accepts and then stays silent must not hang the caller.
+   */
   static connect(options: DevconConnectOptions): Promise<DevconConnection> {
     const connection = new DevconConnection(options);
+    const { connectTimeoutMs = 5000 } = options;
     return new Promise((resolve, reject) => {
       const fail = (error: Error) => {
         cleanup();
@@ -264,7 +269,17 @@ export class DevconConnection extends EventEmitter {
       const onClose = () =>
         fail(new Error(`devcon closed before handshake (${options.host}:${options.port})`));
       const onError = (error: Error) => fail(error);
+      const timer = setTimeout(
+        () =>
+          fail(
+            new Error(
+              `devcon handshake on ${options.host}:${options.port} produced no AINF within ${connectTimeoutMs}ms`,
+            ),
+          ),
+        connectTimeoutMs,
+      );
       const cleanup = () => {
+        clearTimeout(timer);
         connection.off("ready", succeed);
         connection.off("close", onClose);
         connection.off("error", onError);

@@ -33,10 +33,27 @@ function positiveInt(raw: string | undefined, fallback: number, name: string): n
   return value;
 }
 
-function splitAddress(raw: string | undefined, fallbackHost: string, fallbackPort: number) {
+/**
+ * `host`, `host:port`, `[v6]`, `[v6]:port` or a bare IPv6 literal (`::1`, no
+ * port). Brackets are stripped from the returned host.
+ */
+export function splitAddress(
+  raw: string | undefined,
+  fallbackHost: string,
+  fallbackPort: number,
+): { host: string; port: number } {
   if (!raw) return { host: fallbackHost, port: fallbackPort };
+  const bracketed = /^\[([^\]]+)\](?::(\d+))?$/.exec(raw);
+  if (bracketed) {
+    return {
+      host: bracketed[1] ?? fallbackHost,
+      port: positiveInt(bracketed[2], fallbackPort, "rcon address port"),
+    };
+  }
+  const colons = raw.split(":").length - 1;
+  if (colons === 0) return { host: raw, port: fallbackPort };
+  if (colons > 1) return { host: raw, port: fallbackPort }; // bare IPv6, no port
   const index = raw.lastIndexOf(":");
-  if (index === -1) return { host: raw, port: fallbackPort };
   return {
     host: raw.slice(0, index),
     port: positiveInt(raw.slice(index + 1), fallbackPort, "rcon address port"),

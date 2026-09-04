@@ -4,6 +4,7 @@ import {
   RconError,
   encodeRconRequest,
   parseRconResponse,
+  sameHost,
 } from "../src/protocol/rcon.js";
 import { FakeRconServer } from "./helpers/fake-rcon.js";
 
@@ -30,6 +31,20 @@ describe("wire format", () => {
       text: "Invalid connection.",
     });
     expect(() => parseRconResponse(Buffer.from("garbage"))).toThrow(/unrecognized/);
+  });
+});
+
+describe("sameHost (reply source check)", () => {
+  it("accepts the literal we sent to, localhost aliases, and resolved hostnames", () => {
+    expect(sameHost("127.0.0.1", "127.0.0.1")).toBe(true);
+    expect(sameHost("127.0.0.1", "localhost")).toBe(true);
+    expect(sameHost("::1", "localhost")).toBe(true);
+    expect(sameHost("10.0.0.7", "game.example.net")).toBe(true);
+  });
+
+  it("rejects a different IP literal", () => {
+    expect(sameHost("10.0.0.99", "10.0.0.7")).toBe(false);
+    expect(sameHost("192.168.0.2", "127.0.0.1")).toBe(false);
   });
 });
 

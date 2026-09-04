@@ -154,6 +154,28 @@ describe("DevconConnection", () => {
       DevconConnection.connect({ host: "127.0.0.1", port: deadPort, connectTimeoutMs: 1000 }),
     ).rejects.toThrow();
   });
+
+  it("rejects when the port accepts but never sends AINF (handshake deadline)", async () => {
+    const accepted: net.Socket[] = [];
+    const silent = net.createServer((socket) => {
+      accepted.push(socket); // accept and say nothing
+    });
+    await new Promise<void>((resolve) => silent.listen(0, "127.0.0.1", () => resolve()));
+    cleanups.push(
+      () =>
+        new Promise((resolve) => {
+          for (const socket of accepted) socket.destroy();
+          silent.close(() => resolve());
+        }),
+    );
+    const { port } = silent.address() as net.AddressInfo;
+
+    const started = Date.now();
+    await expect(
+      DevconConnection.connect({ host: "127.0.0.1", port, connectTimeoutMs: 200 }),
+    ).rejects.toThrow(/no AINF within 200ms/);
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
 });
 
 async function vi_poll(predicate: () => boolean, timeoutMs = 4000): Promise<void> {

@@ -6,6 +6,7 @@
 // never binds despite the component source in citizenfx/fivem@03dcc562).
 
 import { promises as fs } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 import type { ConsoleLine } from "../console-buffer.js";
 
 // VT100/ANSI CSI (incl. private-mode params like ESC[?202h seen in FXServer's
@@ -80,7 +81,13 @@ export class ServerLogFile {
     return lines.slice(-limit);
   }
 
-  /** Polls the file for new content and resolves on the first line matching `pattern`. */
+  /**
+   * Polls the file for new content and resolves on the first line matching
+   * `pattern`. The byte cursor always advances by what was actually read; the
+   * text of an unfinished trailing line is carried separately, so a chunk
+   * without a newline is never re-read (and never re-appended) on the next poll.
+   * A StringDecoder keeps multi-byte UTF-8 sequences split across chunks intact.
+   */
   async waitFor(
     pattern: string,
     options: { timeoutMs: number; pollMs?: number },
@@ -90,6 +97,7 @@ export class ServerLogFile {
     const deadline = Date.now() + options.timeoutMs;
     let cursor = (await fs.stat(this.path).catch(() => null))?.size ?? 0;
     let partial = "";
+    let decoder = new StringDecoder("utf8");
 
     for (;;) {
       let size = 0;
@@ -101,29 +109,31 @@ export class ServerLogFile {
       if (size < cursor) {
         cursor = 0; // truncated/restarted
         partial = "";
+        decoder = new StringDecoder("utf8");
       }
       if (size > cursor) {
         const handle = await fs.open(this.path, "r");
+        let bytesRead = 0;
+        let chunk: Buffer;
         try {
-          const buffer = Buffer.alloc(size - cursor);
-          await handle.read(buffer, 0, buffer.length, cursor);
-          const combined = partial + buffer.toString("utf8");
-          const lastNewline = combined.lastIndexOf("\n");
-          if (lastNewline === -1) {
-            partial = combined; // no complete line yet
-          } else {
-            const complete = combined.slice(0, lastNewline + 1);
-            partial = combined.slice(lastNewline + 1);
-            // Only bytes from this chunk that belong to complete lines advance the cursor.
-            cursor += buffer.length - Buffer.byteLength(partial, "utf8");
-            for (const line of complete.split(/\r?\n/)) {
-              if (line.length === 0) continue;
-              const entry = { ...parseServerLogLine(line), seq: 0, at: Date.now() };
-              if (regex.test(`${entry.channel}: ${entry.message}`)) return entry;
-            }
-          }
+          const buffer = Buffer.allocUnsafe(size - cursor);
+          bytesRead = (await handle.read(buffer, 0, buffer.length, cursor)).bytesRead;
+          chunk = buffer.subarray(0, bytesRead);
         } finally {
           await handle.close();
+        }
+        cursor += bytesRead;
+        const combined = partial + decoder.write(chunk);
+        const lastNewline = combined.lastIndexOf("\n");
+        if (lastNewline === -1) {
+          partial = combined; // no complete line yet
+        } else {
+          partial = combined.slice(lastNewline + 1);
+          for (const line of combined.slice(0, lastNewline).split(/\r?\n/)) {
+            if (line.length === 0) continue;
+            const entry = { ...parseServerLogLine(line), seq: 0, at: Date.now() };
+            if (regex.test(`${entry.channel}: ${entry.message}`)) return entry;
+          }
         }
       }
       if (Date.now() > deadline) {

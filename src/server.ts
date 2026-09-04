@@ -50,6 +50,15 @@ function guarded<A>(handler: (args: A) => Promise<CallToolResult>) {
   };
 }
 
+/**
+ * One console command per call. A newline inside the text would smuggle a second
+ * command into the RCON payload (`<pw> <cmd>\n<cmd2>`) or the devcon CMND frame.
+ */
+const consoleCommand = z
+  .string()
+  .min(1)
+  .regex(/^[^\r\n]*$/, "command must be a single line (no CR/LF)");
+
 const TARGET_DESCRIPTION =
   "'server' = the FXServer console (UDP RCON; needs rcon_password). " +
   "'client' = the F8 console of a running FiveM Legacy client (devcon 29200/29300) — " +
@@ -102,9 +111,9 @@ export function buildMcpServer(config: Config, hub: Hub): McpServer {
         "command's captured console output. Needs `rcon_password` on the server and " +
         "FIVEM_RCON_PASSWORD here; rate-limited server-side (~5 burst).",
       inputSchema: {
-        command: z
-          .string()
-          .describe("Command text without a leading slash, e.g. 'restart breeze-chat'"),
+        command: consoleCommand.describe(
+          "Command text without a leading slash, e.g. 'restart breeze-chat'",
+        ),
       },
     },
     guarded(async (args: { command: string }) => {
@@ -126,7 +135,7 @@ export function buildMcpServer(config: Config, hub: Hub): McpServer {
         "privileges, or drive the chat UI with the M2 input tools). Waits until output " +
         "goes quiet and returns the lines the client console printed.",
       inputSchema: {
-        command: z.string().describe("Command text, e.g. 'connect localhost:30120'"),
+        command: consoleCommand.describe("Command text, e.g. 'connect localhost:30120'"),
         timeoutMs: z
           .number()
           .int()

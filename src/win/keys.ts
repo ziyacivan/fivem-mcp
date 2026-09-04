@@ -21,6 +21,7 @@ export const INPUT_KEYBOARD = 1;
 // and raw input, which key off the scan code, not the virtual key.
 const KEYS: Record<string, KeySpec> = {
   escape: { vk: 0x1b, scan: 0x01 },
+  esc: { vk: 0x1b, scan: 0x01 },
   "1": { vk: 0x31, scan: 0x02 },
   "2": { vk: 0x32, scan: 0x03 },
   "3": { vk: 0x33, scan: 0x04 },
@@ -33,11 +34,16 @@ const KEYS: Record<string, KeySpec> = {
   "0": { vk: 0x30, scan: 0x0b },
   enter: { vk: 0x0d, scan: 0x1c },
   control: { vk: 0xa2, scan: 0x1d },
+  ctrl: { vk: 0xa2, scan: 0x1d },
   lcontrol: { vk: 0xa2, scan: 0x1d },
   rcontrol: { vk: 0xa3, scan: 0x1d, extended: true },
   shift: { vk: 0x10, scan: 0x2a },
   lshift: { vk: 0x10, scan: 0x2a },
-  rshift: { vk: 0x11, scan: 0x36, extended: true },
+  // VK_RSHIFT is 0xA1 (0x11 would be VK_CONTROL); scan 0x36 is not E0-prefixed.
+  rshift: { vk: 0xa1, scan: 0x36 },
+  alt: { vk: 0xa4, scan: 0x38 },
+  lalt: { vk: 0xa4, scan: 0x38 },
+  ralt: { vk: 0xa5, scan: 0x38, extended: true },
   space: { vk: 0x20, scan: 0x39 },
   tab: { vk: 0x09, scan: 0x0f },
   backspace: { vk: 0x08, scan: 0x0e },

@@ -12,10 +12,17 @@ const state = {
   triggered: [] as unknown[][],
 };
 
-function run(id: string, target: string, src: string, req: Record<string, unknown>): string | null {
+function run(
+  id: string,
+  target: string,
+  src: string,
+  req: Record<string, unknown>,
+  caller = 0,
+): string | null {
   const handler = state.commands.get("mcpb");
   if (!handler) throw new Error("mcpb command not registered");
-  handler(-1, [id, target, src, encodeRequest(req)]);
+  // FiveM passes source 0 for console/RCON invocations; players carry their server id.
+  handler(caller, [id, target, src, encodeRequest(req)]);
   const line = state.printed.find(
     (l) =>
       l.startsWith(`MCP_RESULT ${id} `) ||
@@ -72,6 +79,15 @@ describe("bridge server half (faked FiveM runtime)", () => {
   it("ping", () => {
     const line = run("t1", "server", "-", { op: "ping" });
     expect(line).toMatch(/"ok":true.*"pong":true/);
+  });
+
+  it("refuses invocations from players (only source 0 = console/RCON may run mcpb)", () => {
+    const line = run("t1p", "server", "-", { op: "ping" }, 5);
+    expect(line).toBeNull();
+    expect(state.printed.some((l) => l.startsWith("MCPB_DENY player 5"))).toBe(true);
+    expect(state.clientTriggered.filter((t) => t[0] === "mcpb:req").length).toBe(0);
+    const client = run("t1q", "client", "3", { op: "position" }, 5);
+    expect(client).toBeNull();
   });
 
   it("players", () => {

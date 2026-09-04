@@ -64,4 +64,17 @@ describe("SendInput byte layout (x64 INPUT = 40 bytes)", () => {
   it("case-insensitive lookup", () => {
     expect(keySpec("W")).toEqual(keySpec("w"));
   });
+
+  it("modifier virtual keys are the Win32 constants (rshift was VK_CONTROL once)", () => {
+    expect(keySpec("rshift")).toEqual({ vk: 0xa1, scan: 0x36 });
+    expect(keySpec("rcontrol")).toMatchObject({ vk: 0xa3, extended: true });
+    expect(keySpec("alt")).toEqual({ vk: 0xa4, scan: 0x38 });
+    expect(keySpec("ralt")).toMatchObject({ vk: 0xa5, scan: 0x38, extended: true });
+  });
+
+  it("documented aliases resolve (esc, ctrl, alt)", () => {
+    expect(keySpec("esc")).toEqual(keySpec("escape"));
+    expect(keySpec("ctrl")).toEqual(keySpec("control"));
+    expect(keySpec("alt")).toEqual(keySpec("lalt"));
+  });
 });

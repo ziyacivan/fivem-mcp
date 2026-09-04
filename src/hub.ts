@@ -34,6 +34,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  */
 export class Hub {
   private clientConnection: DevconConnection | null = null;
+  private clientConnecting: Promise<DevconConnection> | null = null;
   private clientLastError: string | null = null;
   readonly clientBuffer: ConsoleBuffer;
   readonly rcon: RconClient;
@@ -51,10 +52,23 @@ export class Hub {
     this.serverLog = config.serverLogFile ? new ServerLogFile(config.serverLogFile) : null;
   }
 
-  /** Return a live client devcon connection, dialing (or redialing) if needed. */
-  async ensureClient(): Promise<DevconConnection> {
-    if (this.clientConnection?.isReady) return this.clientConnection;
+  /**
+   * Return a live client devcon connection, dialing (or redialing) if needed.
+   * Concurrent callers share one dial: two tool calls racing here must not open
+   * two sockets (each would push every console line into the buffer twice).
+   */
+  ensureClient(): Promise<DevconConnection> {
+    if (this.clientConnection?.isReady) return Promise.resolve(this.clientConnection);
+    if (this.clientConnecting) return this.clientConnecting;
+    this.clientConnecting = this.dialClient().finally(() => {
+      this.clientConnecting = null;
+    });
+    return this.clientConnecting;
+  }
+
+  private async dialClient(): Promise<DevconConnection> {
     this.clientConnection?.destroy();
+    this.clientConnection = null;
 
     try {
       const connection = await DevconConnection.connectFirstUsable(
@@ -63,8 +77,14 @@ export class Hub {
       );
       connection.on("print", (line) => this.clientBuffer.push(line));
       connection.on("close", () => {
-        this.clientLastError = "connection closed";
+        this.clientLastError ??= "connection closed";
         if (this.clientConnection === connection) this.clientConnection = null;
+      });
+      // A malformed frame after the handshake destroys the socket and emits
+      // "error"; without a listener that would throw out of the socket callback
+      // and take the whole MCP process down.
+      connection.on("error", (error: unknown) => {
+        this.clientLastError = `devcon protocol error: ${error instanceof Error ? error.message : String(error)}`;
       });
       this.clientConnection = connection;
       this.clientLastError = null;

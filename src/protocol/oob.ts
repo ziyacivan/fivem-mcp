@@ -7,6 +7,7 @@
 //  - code/components/citizen-server-impl/include/outofbandhandlers/GetInfoOutOfBand.h
 
 import dgram from "node:dgram";
+import { sameHost } from "./rcon.js";
 
 const OOB_PREFIX = Buffer.from([0xff, 0xff, 0xff, 0xff]);
 
@@ -50,8 +51,9 @@ export function oobQuery(key: string, payload: string, options: OobOptions): Pro
       () => fail(new Error(`no OOB reply to ${key} from ${host}:${port} within ${timeoutMs}ms`)),
       timeoutMs,
     );
-    socket.on("message", (msg) => {
+    socket.on("message", (msg, rinfo) => {
       if (settled) return;
+      if (rinfo.port !== port || !sameHost(rinfo.address, host)) return; // spoofed reply
       settled = true;
       clearTimeout(timer);
       let payloadReply = msg;

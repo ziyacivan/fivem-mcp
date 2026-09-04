@@ -150,6 +150,11 @@ export class FakeDevconServer {
     for (const socket of this.sockets) socket.write(data);
   }
 
+  /** Push arbitrary bytes to every client — for protocol-error tests. */
+  sendRaw(data: Buffer): void {
+    for (const socket of this.sockets) socket.write(data);
+  }
+
   close(): Promise<void> {
     for (const socket of this.sockets) socket.destroy();
     return new Promise((resolve) => this.listener.close(() => resolve()));

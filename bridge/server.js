@@ -164,6 +164,13 @@ AddEventHandler("mcpb:res", (id, resultJson) => {
 RegisterCommand(
   "mcpb",
   (src, args) => {
+    // Console/RCON invocations arrive with source 0. Anything else is a player
+    // typing the command — refuse before touching the payload, and say nothing
+    // (no MCP_RESULT for an id we never accepted).
+    if (Number(src) !== 0) {
+      console.log(`MCPB_DENY player ${src} tried to run mcpb`);
+      return;
+    }
     if (args[0] === undefined) {
       console.log("MCPB_USAGE mcpb <id> <server|client> [src] <base64 json>");
       return;
@@ -207,5 +214,5 @@ RegisterCommand(
     }
     emit(id, { ok: false, error: `unknown target '${target}'` });
   },
-  false,
+  true, // restricted: console/RCON only (plus any explicit ace grant)
 );

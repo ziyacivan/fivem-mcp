@@ -313,30 +313,42 @@ export function captureWindow(hwnd: bigint): CapturedFrame {
   bmi.writeUInt16LE(32, 14);
 
   let method: CapturedFrame["method"] = "printwindow";
+  // Every GDI object acquired below is released in the finally block, in
+  // reverse order, whatever throws in between — a failed screenshot must not
+  // leak a DC or bitmap per attempt.
   const hdcWindow = a.GetWindowDC(hwnd);
-  const hdcMem = a.CreateCompatibleDC(hdcWindow);
-  const hbmp = a.CreateCompatibleBitmap(hdcWindow, w, h);
-  const old = a.SelectObject(hdcMem, hbmp);
-  let ok = a.PrintWindow(hwnd, hdcMem, PW_RENDERFULLCONTENT);
-  a.GetDIBits(hdcMem, hbmp, 0, h, bits, bmi, 0);
-  let brightness = measureBrightness(bits);
-  if (!ok || brightness < 0.02) {
-    // GTA renders through a flip-model swapchain: PrintWindow can hand back a
-    // black frame. Screen BitBlt then captures what the player actually sees —
-    // the window must be unoccluded (hence ensureFocused at the tool layer).
-    method = "bitblt-screen";
-    const hdcScreen = a.GetDC(BigInt(0));
-    ok = a.BitBlt(hdcMem, 0, 0, w, h, hdcScreen, rect.left, rect.top, SRCCOPY);
+  if (!hdcWindow) throw new Error("GetWindowDC failed (window gone?)");
+  let hdcMem: unknown = null;
+  let hbmp: unknown = null;
+  let old: unknown = null;
+  let hdcScreen: unknown = null;
+  try {
+    hdcMem = a.CreateCompatibleDC(hdcWindow);
+    hbmp = a.CreateCompatibleBitmap(hdcWindow, w, h);
+    if (!hdcMem || !hbmp) throw new Error("could not create an offscreen GDI surface");
+    old = a.SelectObject(hdcMem, hbmp);
+    let ok = a.PrintWindow(hwnd, hdcMem, PW_RENDERFULLCONTENT);
     a.GetDIBits(hdcMem, hbmp, 0, h, bits, bmi, 0);
-    brightness = measureBrightness(bits);
-    a.ReleaseDC(BigInt(0), hdcScreen);
+    let brightness = measureBrightness(bits);
+    if (!ok || brightness < 0.02) {
+      // GTA renders through a flip-model swapchain: PrintWindow can hand back a
+      // black frame. Screen BitBlt then captures what the player actually sees —
+      // the window must be unoccluded (hence ensureFocused at the tool layer).
+      method = "bitblt-screen";
+      hdcScreen = a.GetDC(BigInt(0));
+      ok = a.BitBlt(hdcMem, 0, 0, w, h, hdcScreen, rect.left, rect.top, SRCCOPY);
+      a.GetDIBits(hdcMem, hbmp, 0, h, bits, bmi, 0);
+      brightness = measureBrightness(bits);
+    }
+    if (!ok) throw new Error("window capture failed (PrintWindow and BitBlt both returned false)");
+    return { width: w, height: h, pixels: bits, method, brightness };
+  } finally {
+    if (hdcScreen) a.ReleaseDC(BigInt(0), hdcScreen);
+    if (hdcMem && old) a.SelectObject(hdcMem, old);
+    if (hbmp) a.DeleteObject(hbmp);
+    if (hdcMem) a.DeleteDC(hdcMem);
+    a.ReleaseDC(hwnd, hdcWindow);
   }
-  a.SelectObject(hdcMem, old);
-  a.DeleteObject(hbmp);
-  a.DeleteDC(hdcMem);
-  a.ReleaseDC(hwnd, hdcWindow);
-  if (!ok) throw new Error("window capture failed (PrintWindow and BitBlt both returned false)");
-  return { width: w, height: h, pixels: bits, method, brightness };
 }
 
 function measureBrightness(bgra: Buffer): number {

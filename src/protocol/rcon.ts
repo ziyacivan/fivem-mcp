@@ -22,6 +22,19 @@ export function encodeRconRequest(password: string, command: string): Buffer {
   return Buffer.concat([OOB_PREFIX, Buffer.from(`rcon\n${password} ${command}`, "utf8")]);
 }
 
+/**
+ * Does a reply's source address belong to the host we sent to? Hostnames are
+ * resolved by the OS at send time, so a non-literal `host` cannot be compared
+ * byte-for-byte; the port check still applies, and loopback names are matched
+ * against their literals.
+ */
+export function sameHost(replyAddress: string, requestedHost: string): boolean {
+  if (replyAddress === requestedHost) return true;
+  if (requestedHost === "localhost") return replyAddress === "127.0.0.1" || replyAddress === "::1";
+  // Not an IP literal we can compare — trust the OS resolution.
+  return !/^[\d.]+$|^[0-9a-f:]+$/i.test(requestedHost);
+}
+
 export interface RconResponse {
   kind: "print" | "error";
   text: string;
@@ -100,8 +113,11 @@ export class RconClient {
         );
       }, timeoutMs);
 
-      socket.on("message", (msg) => {
+      socket.on("message", (msg, rinfo) => {
         if (settled) return;
+        // Only the server we asked may answer: a datagram from anywhere else
+        // would let a third party inject fabricated console output.
+        if (rinfo.port !== port || !sameHost(rinfo.address, host)) return;
         settled = true;
         let response: RconResponse;
         try {
