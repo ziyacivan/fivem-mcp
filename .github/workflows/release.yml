@@ -4,13 +4,20 @@ name: Release
 # -> full gate -> npm publish with provenance -> GitHub Release with the
 # changelog section -> MCP Registry publish.
 #
-# Auth is tokenless: npm OIDC trusted publishing and `mcp-publisher login
-# github-oidc` both use this workflow's GitHub identity, so no NPM_TOKEN secret
-# exists or is needed. One-time setup on npmjs.com: package settings ->
-# Publishing access -> Trusted Publisher -> GitHub Actions, repository
-# ziyacivan/fivem-mcp, workflow `.github/workflows/release.yml`.
-# Trusted publishing needs npm CLI >= 11.5, newer than the one bundled with the
-# runner's Node, hence the explicit upgrade below.
+# npm auth, either way round:
+#   1. Tokenless (preferred). On npmjs.com: package fivem-mcp-server ->
+#      Settings -> Publishing access -> Trusted publisher -> GitHub Actions,
+#      repository ziyacivan/fivem-mcp, workflow `.github/workflows/release.yml`.
+#      Nothing to store in the repo. Needs npm CLI >= 11.5, newer than the one
+#      bundled with the runner's Node — hence the explicit upgrade below.
+#   2. Fallback: a granular npm access token with publish rights on this
+#      package, stored as the repository secret NPM_TOKEN. Picked up
+#      automatically when present; provenance still comes from this workflow's
+#      OIDC identity.
+# Without either, the registry answers `404 ... you do not have permission`.
+#
+# `mcp-publisher login github-oidc` always uses the workflow's GitHub identity
+# (the io.github.<owner> namespace is claimed by repository ownership).
 
 on:
   push:
@@ -44,8 +51,12 @@ jobs:
           PKG=$(node -p "require('./package.json').version")
           test "v$PKG" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != package.json v$PKG"; exit 1; }
       - name: Publish to npm
-        # provenance comes from publishConfig in package.json
+        # provenance comes from publishConfig in package.json; NODE_AUTH_TOKEN
+        # is empty unless the NPM_TOKEN fallback secret is set, in which case
+        # setup-node's .npmrc uses it.
         run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Extract changelog section
         run: node scripts/changelog-section.mjs "${GITHUB_REF_NAME#v}" > release-notes.md
       - uses: softprops/action-gh-release@v2
