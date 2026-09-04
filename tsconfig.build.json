@@ -5,7 +5,11 @@
     "outDir": "dist",
     "rootDir": "src",
     "declaration": false,
-    "sourceMap": false
+    "sourceMap": true,
+    "inlineSources": true,
+    "removeComments": true,
+    "incremental": true,
+    "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
   "include": ["src"]
 }

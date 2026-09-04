@@ -23,9 +23,10 @@ fivem-mcp-server ──► UDP RCON / getinfo ──► FXServer (game port, e.g
 
 ## Status
 
-v0.4 drives the whole loop: server console (RCON), client F8 console (devcon), the game
+v0.5 drives the whole loop: server console (RCON), client F8 console (devcon), the game
 window (launch, focus, screenshot, keyboard/mouse) and an in-game bridge (`mcpb`) for
-natives, exports and NUI callbacks — plus ready-made test prompts. All of it live-verified
+natives, exports and NUI callbacks — plus ready-made test prompts. Tools answer with
+structured content, carry MCP annotations, and stop as soon as the client cancels. All of it live-verified
 against a real FXServer + FiveM Legacy client (see `docs/plan.md` and `scripts/live-*.mjs`).
 
 ## Where it is published
@@ -112,6 +113,7 @@ claude mcp add fivem -- node ./dist/index.js        # points at your working cop
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `FIVEM_HOST` | `127.0.0.1` | Machine running the FiveM client (devcon host) |
+| `FIVEM_EXECUTABLE` | `%LOCALAPPDATA%\FiveM\FiveM.exe` | FiveM.exe for the `launch` tool |
 | `FIVEM_CLIENT_DEVCON_PORT` | `29200` then `29300` | Override the client devcon port |
 | `FIVEM_RCON_ADDRESS` | `FIVEM_HOST:30120` | FXServer game port (UDP RCON + getinfo) |
 | `FIVEM_RCON_PASSWORD` | — | Matches `rcon_password` in `server.cfg`; needed by `server_command` |
@@ -120,6 +122,7 @@ claude mcp add fivem -- node ./dist/index.js        # points at your working cop
 | `FIVEM_CONSOLE_CAPACITY` | `5000` | Client console lines kept in the ring buffer |
 | `FIVEM_QUIET_MS` | `400` | Consider command output done after this quiet period |
 | `FIVEM_COMMAND_TIMEOUT_MS` | `5000` | Default max wait for `client_command` output |
+| `FIVEM_MCP_DEBUG` | — | `1` traces devcon frames and RCON round-trips on stderr |
 
 ## Tools
 
@@ -128,7 +131,7 @@ claude mcp add fivem -- node ./dist/index.js        # points at your working cop
 | `status` | Connection state: RCON, log file, client devcon. Call first. |
 | `server_info` | `getinfo` over UDP — hostname, players, max clients, protocol, game build. **No credentials needed.** |
 | `server_command` | Any server console command over UDP RCON; returns the captured output. |
-| `client_command` | Types into the F8 console of a running Legacy client over devcon (nothing steals focus). This is the **local console command** layer — `connect`, `quit`, tooling; `RegisterCommand` chat commands are a different system (use `server_command`, which runs with console privileges, or the planned input/bridge tools). Returns the console lines it printed. |
+| `client_command` | Types into the F8 console of a running Legacy client over devcon (nothing steals focus). This is the **local console command** layer — `connect`, `quit`, tooling; `RegisterCommand` chat commands are a different system (use `server_command`, which runs with console privileges, or the input/bridge tools). Returns the console lines it printed. |
 | `read_console` | Recent lines: client = live devcon stream (with `afterSeq` paging), server = tail of `FIVEM_SERVER_LOG`. Filter by `channel`/`contains`/`pattern`. |
 | `wait_for_console` | Block until a line matching a regex appears — your assertion primitive. |
 | `list_commands` | Every command the client console knows (devcon handshake). |
@@ -142,7 +145,7 @@ claude mcp add fivem -- node ./dist/index.js        # points at your working cop
 | `mouse_move` / `click` / `scroll` | Relative moves drive the camera; absolute coordinates position the cursor for NUI. |
 | `wait` | Pause between actions (loading screens, walk cycles). |
 | `read_client_log` | The newest `CitizenFX_log_*.log` from the FiveM install. |
-| `bridge` | Invoke the `mcpb` bridge resource: player list, any resource export, event triggering (server half) and client natives, teleport, freeze, `SendNUIMessage`, NUI callback calls (client half). |
+| `bridge` | Invoke the `mcpb` bridge resource: `ping`, `players`, `poll`, `call_export`, `trigger_event` (server half) and `ping`, `position`, `teleport`, `freeze`, `call_native`, `send_nui`, `nui_callback` (client half). `op` is validated against the chosen target. |
 
 ## Prompts
 
@@ -166,6 +169,11 @@ cp -r bridge/ <server-data>/resources/mcpb     # or a junction
 #   ensure mcpb
 #   setr mcpb_enabled true
 #   setr mcpb_token <a-random-token>
+#   setr mcpb_event_allowlist  my:event,other:event      # trigger_event may fire only these
+#   setr mcpb_export_allowlist myres:*,other:method       # optional; empty = any export
+#   setr mcpb_native_allowlist SetEntityHealth,GetGameTimer   # optional; empty = any native
+#   setr mcpb_client_timeout_ms 8000                      # a silent client fails fast
+#   setr mcpb_verbose true                                # echo requests to both consoles
 ```
 
 and point this server at it with `FIVEM_MCPB_TOKEN`. Then:
@@ -178,9 +186,10 @@ bridge { target: "server", op: "call_export", args: "{\"resource\":\"myres\",\"m
 Client results come back through an in-band queue polled over RCON (~100 ms granularity
 since v0.5 — no log file needed; pre-0.5 resources still fall back to the log tail).
 
-**Dev servers only.** `mcpb_enabled` defaults to `false` and the token is checked when set,
-but `call_native` is exactly as safe as the console it runs behind — keep RCON and this
-bridge off anything you care about. The full wire contract: [docs/protocol.md §4](docs/protocol.md).
+**Dev servers only.** `mcpb_enabled` defaults to `false`, the command is accepted only from
+the console/RCON (never from a player), and the token is checked when set — but
+`call_native` is exactly as safe as the console it runs behind. Keep RCON and this bridge
+off anything you care about; see [SECURITY.md](SECURITY.md). The full wire contract: [docs/protocol.md §4](docs/protocol.md).
 
 ## Typical loop (what an agent does)
 
@@ -206,16 +215,19 @@ bridge off anything you care about. The full wire contract: [docs/protocol.md §
 ## Development
 
 ```sh
-pnpm test        # vitest — 102 tests: fake devcon/rcon servers, byte-level SendInput/PNG checks, bridge contract
+pnpm test        # vitest: fake devcon/rcon servers, byte-level SendInput/PNG checks, bridge contract, docs drift
 pnpm typecheck
 pnpm check       # biome
 pnpm build       # -> dist/
 pnpm run ci      # all of the above (plain `pnpm ci` is a pnpm builtin and errors)
 ```
 
-Releasing: bump `package.json` (and `server.json`) version, tag `vX.Y.Z`, `npm publish`
-(`prepublishOnly` runs the full gate), then `mcp-publisher publish` for the MCP Registry —
-`server.json` + the `mcpName` field in `package.json` are the registry's ownership markers.
+Releasing: `pnpm version <patch|minor|major>` (syncs `server.json` and the bridge manifest),
+`git push --follow-tags` — the Release workflow runs the gate, publishes to npm with
+provenance, creates the GitHub Release from `CHANGELOG.md`, and publishes to the MCP Registry.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Live verification against a real server/game: `pnpm live:probe`, `live:e2e`, `live:m2`, `live:m3`.
 
 The wire protocol (DevCon frames, RCON/getinfo OOB datagrams, the Cfx string hash)
 is documented byte-by-byte in [docs/protocol.md](docs/protocol.md), derived from the

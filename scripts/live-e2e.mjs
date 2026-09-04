@@ -1,17 +1,13 @@
 // Live end-to-end client verification. Needs: FXServer up + FiveM Legacy client
 // running (connected or not). Assertions reflect the live-verified semantics:
 // devcon CMND drives LOCAL console commands; resource chat commands are not in
-// that context (see docs/protocol.md §3.3).
+// that context (see docs/protocol.md §3.3). Run: pnpm live:e2e
 
 import { loadConfig } from "../dist/config.js";
 import { Hub } from "../dist/hub.js";
+import { check, finish } from "./lib.mjs";
 
 const hub = new Hub(loadConfig());
-let failures = 0;
-const check = (name, ok, detail) => {
-  console.log(`${ok ? "PASS" : "FAIL"} ${name}${detail ? ` — ${detail}` : ""}`);
-  if (!ok) failures++;
-};
 
 // [1] handshake
 const connection = await hub.ensureClient();
@@ -56,5 +52,4 @@ if (hub.rcon.isConfigured && hub.serverLog) {
 }
 
 hub.closeAll();
-console.log(failures === 0 ? "ALL LIVE CHECKS PASSED" : `${failures} FAILED`);
-process.exit(failures === 0 ? 0 : 1);
+finish("E2E LIVE");

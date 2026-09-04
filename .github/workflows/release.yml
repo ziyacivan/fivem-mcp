@@ -1,0 +1,50 @@
+name: Release
+
+# Tag `vX.Y.Z` (after `pnpm version` bumped package.json / server.json / fxmanifest)
+# -> full gate -> npm publish with provenance (OIDC trusted publishing, no token)
+# -> GitHub Release with the changelog section -> MCP Registry publish.
+#
+# One-time setup: on npmjs.com, add this repository + workflow as a Trusted
+# Publisher for fivem-mcp-server; the MCP Registry step authenticates with the
+# GitHub OIDC token of this repo (mcp-publisher login github-oidc).
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run ci
+      - name: Check the tag matches package.json
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          test "v$PKG" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != package.json v$PKG"; exit 1; }
+      - name: Publish to npm (provenance)
+        run: npm publish --provenance --access public
+      - name: Extract changelog section
+        id: notes
+        run: node scripts/changelog-section.mjs "${GITHUB_REF_NAME#v}" > release-notes.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes.md
+      - name: Publish to the MCP Registry
+        run: |
+          curl -fsSL https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz | tar xz mcp-publisher
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish

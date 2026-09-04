@@ -1,8 +1,9 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.12/schema.json",
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "assist": { "actions": { "source": { "organizeImports": "on" } } },
   "files": {
-    "includes": ["**", "!**/dist", "!**/node_modules"]
+    "includes": ["**", "!**/dist", "!**/node_modules", "!**/coverage"]
   },
   "formatter": {
     "enabled": true,
@@ -19,7 +20,60 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "preset": "recommended"
+      "preset": "recommended",
+      "correctness": {
+        "noUndeclaredVariables": "error",
+        "noUnusedImports": "error",
+        "noUnusedVariables": "error"
+      },
+      "style": {
+        "noNonNullAssertion": "error",
+        "useNodejsImportProtocol": "error",
+        "useTemplate": "error"
+      },
+      "suspicious": {
+        "noExplicitAny": "error"
+      },
+      "complexity": {
+        "noExcessiveCognitiveComplexity": {
+          "level": "warn",
+          "options": { "maxAllowedComplexity": 20 }
+        }
+      }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["bridge/**"],
+      "javascript": {
+        "globals": [
+          "GetConvar",
+          "RegisterCommand",
+          "RegisterNetEvent",
+          "AddEventHandler",
+          "TriggerEvent",
+          "TriggerClientEvent",
+          "TriggerServerEvent",
+          "GetNumPlayerIndices",
+          "GetPlayerFromIndex",
+          "GetPlayerName",
+          "GetPlayerPing",
+          "GetPlayerIdentifiers",
+          "PlayerPedId",
+          "GetEntityCoords",
+          "GetEntityHeading",
+          "GetInteriorFromEntity",
+          "IsPedInAnyVehicle",
+          "GetVehiclePedIsIn",
+          "SetEntityCoords",
+          "SetEntityHeading",
+          "FreezeEntityPosition",
+          "SendNUIMessage",
+          "GetFrameCount",
+          "exports",
+          "source"
+        ]
+      }
+    }
+  ]
 }

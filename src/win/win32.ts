@@ -2,7 +2,8 @@
 // must not run at module scope: importing this file on any OS has to work for
 // tests and non-Windows installs — the DLLs load on first use.
 
-import koffi from "koffi";
+import { createRequire } from "node:module";
+import type Koffi from "koffi";
 import { DEFAULTS } from "../defaults.js";
 import { sleep } from "../util.js";
 import {
@@ -21,11 +22,30 @@ import {
 } from "./keys.js";
 
 let api: ReturnType<typeof buildApi> | null = null;
+let koffiModule: typeof Koffi | null = null;
+
+/**
+ * koffi is an optionalDependency loaded on first use: the native addon must
+ * not be required on Linux/macOS installs (where these tools only ever answer
+ * "win32 only"), and a failed optional install must not break `npx` startup.
+ */
+function koffi(): typeof Koffi {
+  if (koffiModule) return koffiModule;
+  try {
+    koffiModule = createRequire(import.meta.url)("koffi") as typeof Koffi;
+  } catch (error) {
+    throw new Error(
+      `the koffi native module is not installed (${error instanceof Error ? error.message : String(error)}) — reinstall fivem-mcp-server on this Windows machine`,
+    );
+  }
+  return koffiModule;
+}
 
 function buildApi() {
-  const user32 = koffi.load("user32.dll");
-  const gdi32 = koffi.load("gdi32.dll");
-  const kernel32 = koffi.load("kernel32.dll");
+  const k = koffi();
+  const user32 = k.load("user32.dll");
+  const gdi32 = k.load("gdi32.dll");
+  const kernel32 = k.load("kernel32.dll");
   return {
     user32,
     gdi32,
@@ -122,7 +142,7 @@ export function isGameWindowTitle(title: string): boolean {
 }
 
 /** The FiveM game window: titled per isGameWindowTitle, visible, with real area. */
-let enumProc: ReturnType<typeof koffi.proto> | null = null;
+let enumProc: ReturnType<typeof Koffi.proto> | null = null;
 
 /** Last window we found; re-validated on the next call before enumerating again. */
 let cachedGame: GameWindow | null = null;
@@ -151,8 +171,9 @@ export function findGameWindow(): GameWindow | null {
 
 function enumerateGameWindow(a: NonNullable<typeof api>): GameWindow | null {
   let found: GameWindow | null = null;
-  if (!enumProc) enumProc = koffi.proto("bool EnumWindowsProc(void* hwnd, intptr_t param)");
-  const callback = koffi.register((hwnd: bigint) => {
+  const k = koffi();
+  if (!enumProc) enumProc = k.proto("bool EnumWindowsProc(void* hwnd, intptr_t param)");
+  const callback = k.register((hwnd: bigint) => {
     if (found) return false;
     if (!a.IsWindowVisible(hwnd)) return true;
     const title = readWindowText(a, hwnd);
@@ -161,11 +182,11 @@ function enumerateGameWindow(a: NonNullable<typeof api>): GameWindow | null {
     if (!rect || rect.right - rect.left < DEFAULTS.minGameWindowWidth) return true;
     found = { hwnd, title, pid: readWindowPid(a, hwnd) };
     return false; // stop enumerating
-  }, koffi.pointer(enumProc));
+  }, k.pointer(enumProc));
   try {
     a.EnumWindows(callback, 0);
   } finally {
-    koffi.unregister(callback);
+    k.unregister(callback);
   }
   return found;
 }

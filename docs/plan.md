@@ -23,7 +23,7 @@ Windows-only helpers via `koffi` (prebuilt FFI, no compile step):
 * `window_status` / `focus_window` / `restore_focus` — real window found:
   `FiveM® by Cfx.re - <hostname>` (title regex `^FiveM`)
 * `screenshot` — PrintWindow(`PW_RENDERFULLCONTENT`) + screen-BitBlt fallback + PNG encode
-  (node zlib, no native image dep), downscaled to 1280 max side
+  (node zlib, no native image dep), downscaled to 900 max side (was 1280)
 * `press_key` / `hold_key` / `release_key` (scan codes; held keys released on exit),
   `type_text` (KEYEVENTF_UNICODE), `mouse_move` / `click` / `scroll`
 * `wait`, `read_client_log` (newest `CitizenFX_log_*.log`)
@@ -93,8 +93,7 @@ A long agent session profiled three costs; all three are code fixes now:
 * [x] MCP prompts: `test_resource` (the live-verified end-to-end playbook) and
       `smoke_check` (one-pass health sweep)
 * [x] git tags v0.3.0 / v0.4.0, repository made public
-* [ ] `npm publish` (needs `npm login` — the package name fivem-mcp-server is free)
-* [ ] `mcp-publisher login github && mcp-publisher publish` (after the npm publish)
+* [x] `npm publish` and `mcp-publisher publish` — automated by the tag-triggered Release workflow
 * [ ] txAdmin live-console fallback when `FIVEM_SERVER_LOG` is not available
 * [ ] NUI inspection via CDP if/when the CEF debug port proves measurable
 

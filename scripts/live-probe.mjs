@@ -1,4 +1,4 @@
-// Manual field probe against a real machine. Run with:  node scripts/live-probe.mjs
+// Manual field probe against a real machine. Run with:  pnpm live:probe
 // Needs: FXServer up (rcon_password optional), optionally a Legacy client running.
 
 import { loadConfig } from "../dist/config.js";
@@ -16,18 +16,17 @@ try {
 }
 
 try {
-  const info = await hub.ensureClient();
-  console.log("client devcon:", info.info.commandLine.slice(0, 100));
-  console.log("client channels:", [...info.channels.values()].slice(0, 15).join(", "));
-  console.log("client commands:", info.commands.size);
-  hub.closeAll();
+  const connection = await hub.ensureClient();
+  console.log("client devcon:", connection.info?.commandLine?.slice(0, 100) ?? "(no AINF yet)");
+  console.log("client channels:", [...connection.channels.values()].slice(0, 15).join(", "));
+  console.log("client commands:", connection.commands.size);
 } catch (error) {
   console.log("client devcon failed:", error.message);
 }
 
 // Server half: arm the log waiter BEFORE sending, so the cursor sits behind the
 // line the command will echo ("waitFor" starts watching at call time).
-if (config.serverLogFile) {
+if (hub.serverLog) {
   try {
     const linePromise = hub.serverLog.waitFor("Rcon from", { timeoutMs: 5000 });
     if (config.rconPassword) {
@@ -52,4 +51,5 @@ if (config.serverLogFile) {
   console.log("rcon: FIVEM_RCON_PASSWORD not set, skipping");
 }
 
+hub.closeAll();
 process.exit(0);

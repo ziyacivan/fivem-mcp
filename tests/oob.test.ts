@@ -1,16 +1,14 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   encodeOobRequest,
   oobQuery,
   parseInfoResponse,
   queryServerInfo,
 } from "../src/protocol/oob.js";
+import { useCleanups } from "./helpers/cleanups.js";
 import { FakeRconServer } from "./helpers/fake-rcon.js";
 
-const cleanups: Array<() => Promise<void>> = [];
-afterEach(async () => {
-  while (cleanups.length > 0) await cleanups.pop()?.();
-});
+const cleanups = useCleanups();
 
 describe("encodeOobRequest", () => {
   it("is 0xFFFFFFFF + '<key>\\n<payload>'", () => {

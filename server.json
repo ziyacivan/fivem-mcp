@@ -25,6 +25,13 @@
           "format": "string"
         },
         {
+          "name": "FIVEM_CLIENT_DEVCON_PORT",
+          "description": "Override the client devcon port (default: try 29200 then 29300)",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "number"
+        },
+        {
           "name": "FIVEM_RCON_ADDRESS",
           "description": "FXServer game host:port for RCON/getinfo. Default <FIVEM_HOST>:30120",
           "isRequired": false,
@@ -40,10 +47,10 @@
         },
         {
           "name": "FIVEM_SERVER_LOG",
-          "description": "Path to FXServer's redirected stdout (server.log); enables server-side console reads and bridge client results",
+          "description": "Path to FXServer's redirected stdout (server.log); enables server-side read_console/wait_for_console (optional fallback transport for pre-0.5 bridges)",
           "isRequired": false,
           "isSecret": false,
-          "format": "string"
+          "format": "filepath"
         },
         {
           "name": "FIVEM_MCPB_TOKEN",
@@ -51,6 +58,41 @@
           "isRequired": false,
           "isSecret": true,
           "format": "string"
+        },
+        {
+          "name": "FIVEM_EXECUTABLE",
+          "description": "Path to FiveM.exe for the launch tool. Default %LOCALAPPDATA%\\FiveM\\FiveM.exe",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "filepath"
+        },
+        {
+          "name": "FIVEM_CONSOLE_CAPACITY",
+          "description": "Client console lines kept in the ring buffer. Default 5000",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "number"
+        },
+        {
+          "name": "FIVEM_QUIET_MS",
+          "description": "Consider client command output complete after this quiet period. Default 400",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "number"
+        },
+        {
+          "name": "FIVEM_COMMAND_TIMEOUT_MS",
+          "description": "Default max wait for client_command output. Default 5000",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "number"
+        },
+        {
+          "name": "FIVEM_MCP_DEBUG",
+          "description": "Set to 1 to trace devcon frames and RCON round-trips on stderr",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "boolean"
         }
       ]
     }

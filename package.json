@@ -30,9 +30,11 @@
   "main": "dist/index.js",
   "files": [
     "dist",
+    "!dist/.tsbuildinfo",
     "bridge",
     "server.json",
-    "docs/protocol.md"
+    "docs/protocol.md",
+    "CHANGELOG.md"
   ],
   "engines": {
     "node": ">=22"
@@ -43,15 +45,20 @@
     "format": "biome check --write .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "build": "tsc -p tsconfig.build.json",
     "ci": "pnpm run check && pnpm run typecheck && pnpm run test && pnpm run build",
     "prepublishOnly": "pnpm run ci",
     "sync-version": "node scripts/sync-version.mjs",
-    "version": "node scripts/sync-version.mjs && git add server.json bridge/fxmanifest.lua"
+    "version": "node scripts/sync-version.mjs && git add server.json bridge/fxmanifest.lua",
+    "live:probe": "pnpm run build && node scripts/live-probe.mjs",
+    "live:e2e": "pnpm run build && node scripts/live-e2e.mjs",
+    "live:m2": "pnpm run build && node scripts/live-m2.mjs",
+    "live:m3": "pnpm run build && node scripts/live-m3.mjs",
+    "smoke:start": "pnpm run build && node scripts/smoke-start.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "koffi": "^3.2.1",
     "zod": "^4.5.4"
   },
   "devDependencies": {
@@ -59,6 +66,29 @@
     "@types/node": "^22.20.1",
     "typescript": "^7.0.2",
     "vite": "^8.2.2",
-    "vitest": "^5.0.0"
+    "vitest": "^5.0.0",
+    "@vitest/coverage-v8": "^5.0.0"
+  },
+  "author": "Yusuf Ziya Civan (https://github.com/ziyacivan)",
+  "exports": {
+    ".": "./dist/index.js",
+    "./config": "./dist/config.js",
+    "./hub": "./dist/hub.js",
+    "./launcher": "./dist/launcher.js",
+    "./protocol/devcon": "./dist/protocol/devcon.js",
+    "./protocol/rcon": "./dist/protocol/rcon.js",
+    "./protocol/oob": "./dist/protocol/oob.js",
+    "./protocol/server-log": "./dist/protocol/server-log.js",
+    "./win/png": "./dist/win/png.js",
+    "./win/win32": "./dist/win/win32.js",
+    "./package.json": "./package.json"
+  },
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "optionalDependencies": {
+    "koffi": "^3.2.1"
   }
 }

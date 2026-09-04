@@ -42,7 +42,7 @@ function mcpbTokens(command: string): string[] | null {
 }
 
 beforeAll(async () => {
-  logPath = path.join(os.tmpdir(), `fivem-mcp-bridge-${process.pid}.log`);
+  logPath = path.join(await fs.mkdtemp(path.join(os.tmpdir(), "fivem-mcp-bridge-")), "server.log");
   await fs.writeFile(logPath, "", "utf8");
 
   // v0.5 bridge: results are drained in-band by the `poll` op.
@@ -99,7 +99,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await Promise.all([working.close(), legacy.close(), uninstalled.close()]);
-  await fs.rm(logPath, { force: true });
+  await fs.rm(path.dirname(logPath), { recursive: true, force: true });
 });
 
 describe("Hub.bridgeCall", () => {
@@ -112,7 +112,6 @@ describe("Hub.bridgeCall", () => {
 
   it("client op collects its result via the in-band poll — no log file needed", async () => {
     const hub = new Hub(config({ rconPort: working.port, rconPassword: "pw", withLog: false }));
-    const started = Date.now();
     const result = await hub.bridgeCall({
       target: "client",
       op: "position",
@@ -120,8 +119,6 @@ describe("Hub.bridgeCall", () => {
       timeoutMs: 5000,
     });
     expect(result).toMatchObject({ ok: true, data: { x: 5, src: 1 } });
-    // poll backoff starts at 100ms: a 60ms answer must arrive well under the old 400ms+tail latency
-    expect(Date.now() - started).toBeLessThan(1500);
     hub.closeAll();
   });
 

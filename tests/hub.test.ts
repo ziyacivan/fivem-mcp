@@ -1,24 +1,12 @@
-import { afterEach, describe, expect, it } from "vitest";
-import type { Config } from "../src/config.js";
+import { describe, expect, it } from "vitest";
 import { Hub } from "../src/hub.js";
+import { useCleanups } from "./helpers/cleanups.js";
+import { makeConfig } from "./helpers/config.js";
 import { FakeDevconServer } from "./helpers/fake-devcon.js";
 
-const cleanups: Array<() => Promise<void>> = [];
-afterEach(async () => {
-  while (cleanups.length > 0) await cleanups.pop()?.();
-});
+const cleanups = useCleanups();
 
-function config(ports: number[]): Config {
-  return {
-    host: "127.0.0.1",
-    clientDevconPorts: ports,
-    rconHost: "127.0.0.1",
-    rconPort: 1,
-    logCapacity: 100,
-    quietMs: 30,
-    commandTimeoutMs: 1000,
-  };
-}
+const config = (ports: number[]) => makeConfig({ clientDevconPorts: ports });
 
 describe("Hub.ensureClient", () => {
   it("concurrent callers share one dial: one socket, every line buffered once", async () => {

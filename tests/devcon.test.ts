@@ -1,11 +1,12 @@
 import net from "node:net";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   DevconConnection,
   DevconFrameDecoder,
   encodeCommand,
   encodeHello,
 } from "../src/protocol/devcon.js";
+import { useCleanups } from "./helpers/cleanups.js";
 import {
   ainfFrame,
   chanFrame,
@@ -14,10 +15,7 @@ import {
   prntFrame,
 } from "./helpers/fake-devcon.js";
 
-const cleanups: Array<() => Promise<void>> = [];
-afterEach(async () => {
-  while (cleanups.length > 0) await cleanups.pop()?.();
-});
+const cleanups = useCleanups();
 
 function closedPort(): Promise<number> {
   return new Promise((resolve) => {

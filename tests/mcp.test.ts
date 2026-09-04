@@ -5,9 +5,9 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { Config } from "../src/config.js";
 import { Hub } from "../src/hub.js";
 import { buildMcpServer } from "../src/server.js";
+import { makeConfig } from "./helpers/config.js";
 import { FakeDevconServer } from "./helpers/fake-devcon.js";
 import { FakeRconServer } from "./helpers/fake-rcon.js";
 
@@ -39,24 +39,22 @@ beforeAll(async () => {
   rconFake = new FakeRconServer("panel-pw", (command) => `rcon ran ${command}\n`);
   const rconPort = await rconFake.listen();
 
-  logPath = path.join(os.tmpdir(), `fivem-mcp-test-${process.pid}.log`);
+  logPath = path.join(await fs.mkdtemp(path.join(os.tmpdir(), "fivem-mcp-test-")), "server.log");
   await fs.writeFile(
     logPath,
     "[           resources] Started resource breeze-chat\n[script:breeze-migrat] applying migrations\n",
     "utf8",
   );
 
-  const config: Config = {
-    host: "127.0.0.1",
+  const config = makeConfig({
     clientDevconPorts: [clientPort],
-    rconHost: "127.0.0.1",
     rconPort,
     rconPassword: "panel-pw",
     serverLogFile: logPath,
     logCapacity: 200,
     quietMs: 50,
     commandTimeoutMs: 3000,
-  };
+  });
 
   hub = new Hub(config);
   const mcpServer = buildMcpServer(config, hub);
@@ -68,7 +66,7 @@ beforeAll(async () => {
 afterAll(async () => {
   hub?.closeAll();
   await Promise.all([clientFake?.close(), rconFake?.close()]);
-  await fs.rm(logPath, { force: true });
+  await fs.rm(path.dirname(logPath), { recursive: true, force: true });
 });
 
 describe("MCP surface", () => {
@@ -305,16 +303,7 @@ describe("MCP surface", () => {
 
 describe("RCON-less server access", () => {
   it("server_command explains what to configure when no password is set", async () => {
-    const config: Config = {
-      host: "127.0.0.1",
-      clientDevconPorts: [1],
-      rconHost: "127.0.0.1",
-      rconPort: 1,
-      logCapacity: 10,
-      quietMs: 10,
-      commandTimeoutMs: 100,
-    };
-    const bareHub = new Hub(config);
+    const bareHub = new Hub(makeConfig({ logCapacity: 10, quietMs: 10, commandTimeoutMs: 100 }));
     await expect(bareHub.runServerCommand("status")).rejects.toThrow(/RCON/);
   });
 });

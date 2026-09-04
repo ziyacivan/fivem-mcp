@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { sameHost } from "../src/protocol/oob.js";
 import {
   encodeRconRequest,
@@ -6,12 +6,10 @@ import {
   RconClient,
   RconError,
 } from "../src/protocol/rcon.js";
+import { useCleanups } from "./helpers/cleanups.js";
 import { FakeRconServer } from "./helpers/fake-rcon.js";
 
-const cleanups: Array<() => Promise<void>> = [];
-afterEach(async () => {
-  while (cleanups.length > 0) await cleanups.pop()?.();
-});
+const cleanups = useCleanups();
 
 describe("wire format", () => {
   it("request is 0xFFFFFFFF + 'rcon\\n<password> <command>'", () => {

@@ -1,60 +1,40 @@
-// M3 live verification. Launches FiveM if needed and waits for the REAL game
-// window (the bootstrapper is titled "FiveM" too — only "by Cfx.re" means the
-// game process), then: players -> position(no-ped/coords) -> Enter to select ->
-// spawn -> teleport -> read back -> screenshot -> quit.
+// M3 live verification: the bridge round trip against the real game. Run:
+//   pnpm live:m3
+// Launches FiveM if needed and waits for the REAL game window, then:
+// players -> position (no-ped or coords) -> Enter to pick a character -> spawn ->
+// teleport -> read back -> screenshot -> client-log cross-check -> quit.
 
-import { writeFileSync } from "node:fs";
 import { loadConfig } from "../dist/config.js";
 import { Hub } from "../dist/hub.js";
 import { latestClientLog, launchFiveM } from "../dist/launcher.js";
-import { DevconConnection } from "../dist/protocol/devcon.js";
 import { ServerLogFile } from "../dist/protocol/server-log.js";
-import { downscaleRgb, encodePng } from "../dist/win/png.js";
+import { focusWindow, pressKey } from "../dist/win/win32.js";
 import {
-  bgraToRgb,
-  captureWindow,
-  findGameWindow,
-  focusWindow,
-  pressKey,
-} from "../dist/win/win32.js";
+  check,
+  connectDevconRetry,
+  finish,
+  quitViaDevcon,
+  realGameWindow,
+  shot,
+  sleep,
+  waitForGameWindow,
+} from "./lib.mjs";
 
-const OUT = "C:\\Users\\yusuf\\AppData\\Local\\Temp\\opencode\\";
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-let failures = 0;
-const check = (name, ok, detail) => {
-  console.log(`${ok ? "PASS" : "FAIL"} ${name}${detail ? ` — ${detail}` : ""}`);
-  if (!ok) failures++;
-};
-
-const hub = new Hub(loadConfig());
-
-const realGameWindow = () => {
-  const g = findGameWindow();
-  return g && /cfx\.re/i.test(g.title) ? g : null;
-};
+const config = loadConfig();
+const hub = new Hub(config);
 
 // [0] boot the game and wait for the actual game window (not the bootstrapper)
 let game = realGameWindow();
 if (!game) {
   console.log("game window (Cfx.re) not up — launching");
-  await launchFiveM("localhost:30120").catch(() => undefined);
-  for (let i = 0; i < 120 && !game; i++) {
-    await sleep(3000);
-    game = realGameWindow();
-  }
+  await launchFiveM(`${config.rconHost}:${config.rconPort}`).catch(() => undefined);
+  game = await waitForGameWindow(120, 3000);
 }
 check("game window", !!game, game?.title);
 if (!game) process.exit(1);
 
 // [1] devcon may need a few tries while the game process loads
-let connection = null;
-for (let i = 0; i < 10 && !connection; i++) {
-  try {
-    connection = await DevconConnection.connectFirstUsable("127.0.0.1", [29200, 29300]);
-  } catch {
-    await sleep(3000);
-  }
-}
+const connection = await connectDevconRetry(config);
 check("devcon", !!connection);
 
 // [2] wait for the join, polling the bridge server half (tolerate transient errors)
@@ -97,7 +77,7 @@ check(
 // [4] if parked on the character screen: pick the first character with a real Enter
 if (!spawned) {
   focusWindow(game.hwnd);
-  pressKey("enter");
+  await pressKey("enter");
   console.log("  Enter pressed — waiting for the spawn flow...");
   for (let i = 0; i < 40 && !spawned; i++) {
     await sleep(3000);
@@ -127,26 +107,26 @@ if (spawned) {
 game = realGameWindow() ?? game;
 focusWindow(game.hwnd);
 await sleep(1000);
-const frame = captureWindow(game.hwnd);
-const scaled = downscaleRgb(bgraToRgb(frame.pixels), frame.width, frame.height, 1280);
-writeFileSync(`${OUT}m3-final.png`, encodePng(scaled.width, scaled.height, scaled.rgb));
+const frame = shot(game, "m3-final");
 check(
   "final screenshot",
   frame.brightness > 0.05,
   `brightness ${(frame.brightness * 100).toFixed(0)}%, ${frame.method}`,
 );
 
-const clientLog = latestClientLog();
+const clientLog = await latestClientLog();
 if (clientLog) {
   const lines = await new ServerLogFile(clientLog).tail({ limit: 200, contains: "mcpb" });
-  check("client log shows bridge activity", lines.length > 0, `${lines.length} mcpb lines`);
+  check(
+    "client log shows bridge activity (needs setr mcpb_verbose true)",
+    lines.length > 0,
+    `${lines.length} mcpb lines`,
+  );
 }
 
 if (connection) {
-  connection.print("quit");
-  await Promise.race([new Promise((r) => connection.once("close", r)), sleep(15000)]);
+  await quitViaDevcon(connection);
   console.log("  quit sent");
 }
 hub.closeAll();
-console.log(failures === 0 ? "M3 LIVE: ALL PASSED" : `M3 LIVE: ${failures} FAILED`);
-process.exit(failures === 0 ? 0 : 1);
+finish("M3 LIVE");

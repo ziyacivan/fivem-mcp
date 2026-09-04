@@ -170,17 +170,28 @@ disabled   -> MCPB_ERR <id> bridge disabled — set mcpb_enabled true
 
 Client results queue on the bridge server (TTL 60 s, max 128 entries, oldest dropped,
 drained-once) so the MCP server can poll them at ~100 ms backoff instead of tailing the
-log file at 400 ms — same wire, ~4x the latency and no `FIVEM_SERVER_LOG` requirement.
+log file at 400 ms — same wire, ~4x lower latency and no `FIVEM_SERVER_LOG` requirement.
 Concurrent calls route by id; foreign poll entries land in the caller-side inbox.
 A pre-0.5 resource without `poll` answers `unknown server op 'poll'` — the client then
 falls back to the log tail, and says so when no log is configured.
 
+* The `mcpb` command is accepted only from source 0 (console/RCON); a player typing it is
+  refused with `MCPB_DENY`. The line must be exactly four tokens and the payload a JSON object.
 * `<id>` is regex-safe (`mcp-[0-9a-z-]+`) and single-use: the server half relays a client
-  result only for ids it dispatched itself, so a hijacked client cannot forge answers for
-  someone else's call (`bridge/server.js` `pendingClientIds`).
+  result only for ids it dispatched itself, and only from the player it dispatched to
+  (`bridge/server.js` `pendingClient`). A dispatched id that gets no answer within
+  `mcpb_client_timeout_ms` (default 8000) is settled as `{ok:false, error:"client … did not answer"}`
+  so the caller fails fast; late answers are dropped.
 * Request JSON: `{ op, token?, ...opArgs }`. Convars: `mcpb_enabled` (default **false**),
-  `mcpb_token` (compared when set), `mcpb_event_allowlist` (comma-separated event names;
-  empty = `trigger_event` can trigger nothing).
+  `mcpb_token` (constant-time compare when set), `mcpb_event_allowlist` (comma-separated
+  event names; empty = `trigger_event` can trigger nothing), `mcpb_export_allowlist`
+  (`resource:method` / `resource:*`; empty = any export), `mcpb_native_allowlist` (native
+  names; empty = any native — names must be PascalCase own globals either way),
+  `mcpb_nui_timeout_ms` (default 5000), `mcpb_verbose` (echo requests).
+* One RCON reply is one UDP datagram: an `MCP_RESULT` line is capped at 1200 bytes (oversize
+  data becomes `{truncated:true, bytes, preview}`) and `poll` returns at most `max` entries
+  (default 16) that fit the same budget. `players` includes identifiers only with
+  `identifiers:true`. BigInt values serialise as strings.
 * Results: `{ ok: true, data }` / `{ ok: false, error }`; every failure — export throw,
   native missing, unknown op — arrives as `ok:false`, never as a broken line.
 * Server ops: `ping`, `players`, `poll`, `call_export`, `trigger_event`.
