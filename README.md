@@ -222,9 +222,11 @@ pnpm build       # -> dist/
 pnpm run ci      # all of the above (plain `pnpm ci` is a pnpm builtin and errors)
 ```
 
-Releasing: `pnpm version <patch|minor|major>` (syncs `server.json` and the bridge manifest),
-`git push --follow-tags` — the Release workflow runs the gate, publishes to npm with
-provenance, creates the GitHub Release from `CHANGELOG.md`, and publishes to the MCP Registry.
+Releasing: move the `Unreleased` changelog notes under the new version heading, then
+`pnpm version <patch|minor|major>` (bumps and syncs `server.json` + the bridge manifest,
+and tags), `npm publish` from your machine (`prepublishOnly` runs the full gate), and
+`git push --follow-tags`. The Release workflow then re-runs the gate, creates the GitHub
+Release from `CHANGELOG.md`, and registers the version with the MCP Registry.
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Live verification against a real server/game: `pnpm live:probe`, `live:e2e`, `live:m2`, `live:m3`.

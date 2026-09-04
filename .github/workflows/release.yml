@@ -1,37 +1,41 @@
 name: Release
 
-# Tag `vX.Y.Z` (after `pnpm version` bumped package.json / server.json / fxmanifest)
-# -> full gate -> npm publish with provenance -> GitHub Release with the
-# changelog section -> MCP Registry publish.
+# What happens on a `vX.Y.Z` tag: the full gate runs, and the GitHub Release is
+# created from the matching CHANGELOG.md section.
 #
-# npm auth, either way round:
-#   1. Tokenless (preferred). On npmjs.com: package fivem-mcp-server ->
-#      Settings -> Publishing access -> Trusted publisher -> GitHub Actions,
-#      repository ziyacivan/fivem-mcp, workflow `.github/workflows/release.yml`.
-#      Nothing to store in the repo. Needs npm CLI >= 11.5, newer than the one
-#      bundled with the runner's Node — hence the explicit upgrade below.
-#   2. Fallback: a granular npm access token with publish rights on this
-#      package, stored as the repository secret NPM_TOKEN. Picked up
-#      automatically when present; provenance still comes from this workflow's
-#      OIDC identity.
-# Without either, the registry answers `404 ... you do not have permission`.
+# **npm publishing is manual and stays manual.** It is done from a maintainer's
+# machine (`npm publish`, with `prepublishOnly` running the same gate), because
+# the account publishes interactively. This workflow therefore never touches the
+# registry with a token, and no NPM_TOKEN secret exists.
 #
-# `mcp-publisher login github-oidc` always uses the workflow's GitHub identity
-# (the io.github.<owner> namespace is claimed by repository ownership).
+# The MCP Registry step runs only once the version is actually on npm — the
+# registry validates the npm package — so the usual order is:
+#   pnpm version <patch|minor|major>   # bumps + syncs + tags
+#   npm publish                        # from your machine
+#   git push --follow-tags             # this workflow: gate, Release, registry
+# Tagging before publishing is fine too: the registry step then leaves a notice
+# and you re-run this job after `npm publish`.
 
 on:
   push:
     tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to (re-)release, e.g. v0.6.0
+        required: true
 
 permissions:
   contents: write
   id-token: write
 
 jobs:
-  publish:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - uses: pnpm/action-setup@v4
         with:
           version: 9.15.0
@@ -39,31 +43,34 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          registry-url: https://registry.npmjs.org
-      - name: Use an npm CLI that speaks OIDC trusted publishing
-        run: |
-          npm install -g npm@latest
-          npm --version
       - run: pnpm install --frozen-lockfile
       - run: pnpm run ci
-      - name: Check the tag matches package.json
+
+      - name: Resolve the version and check it matches package.json
+        id: version
         run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
           PKG=$(node -p "require('./package.json').version")
-          test "v$PKG" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != package.json v$PKG"; exit 1; }
-      - name: Publish to npm
-        # provenance comes from publishConfig in package.json; NODE_AUTH_TOKEN
-        # is empty unless the NPM_TOKEN fallback secret is set, in which case
-        # setup-node's .npmrc uses it.
-        run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Extract changelog section
-        run: node scripts/changelog-section.mjs "${GITHUB_REF_NAME#v}" > release-notes.md
-      - uses: softprops/action-gh-release@v2
+          test "v$PKG" = "$TAG" || { echo "tag $TAG != package.json v$PKG"; exit 1; }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$PKG" >> "$GITHUB_OUTPUT"
+
+      - name: Extract the changelog section
+        run: node scripts/changelog-section.mjs "${{ steps.version.outputs.version }}" > release-notes.md
+
+      - name: Create or update the GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
           body_path: release-notes.md
-      - name: Publish to the MCP Registry
+
+      - name: Publish to the MCP Registry (needs the npm version to exist)
         run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if ! npm view "fivem-mcp-server@$VERSION" version >/dev/null 2>&1; then
+            echo "::notice title=MCP Registry skipped::fivem-mcp-server@$VERSION is not on npm yet. Run 'npm publish' from your machine, then re-run this job (Actions -> Release -> Run workflow -> tag ${{ steps.version.outputs.tag }})."
+            exit 0
+          fi
           curl -fsSL https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz | tar xz mcp-publisher
           ./mcp-publisher login github-oidc
           ./mcp-publisher publish

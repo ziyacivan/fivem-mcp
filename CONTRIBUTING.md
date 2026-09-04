@@ -40,14 +40,22 @@ window/input code is exercised for real only on Windows (CI has a `windows-lates
 
 ## Releasing
 
+npm publishing is manual, from a maintainer's machine; everything after it is automated.
+
 ```sh
-pnpm version minor        # bumps package.json and syncs server.json + bridge/fxmanifest.lua
+# 1. Move the CHANGELOG `Unreleased` notes under a `## [x.y.z] - <date>` heading.
+pnpm version minor        # bumps package.json, syncs server.json + bridge/fxmanifest.lua, tags
+npm publish               # prepublishOnly runs the full gate first
 git push --follow-tags
 ```
 
-The `Release` workflow runs the gate, publishes to npm with provenance, creates the GitHub
-Release from the matching `CHANGELOG.md` section, and publishes to the MCP Registry.
-Move the `Unreleased` notes under the new version heading before tagging.
+Pushing the tag starts the `Release` workflow: it re-runs the gate, creates the GitHub
+Release from the matching `CHANGELOG.md` section, and registers the version with the MCP
+Registry (that last step is skipped with a notice if the version is not on npm yet — after
+publishing, re-run it from Actions → Release → Run workflow with the tag).
+
+`npm publish` needs an interactive login (`npm login`); there is no NPM_TOKEN secret and
+the workflow never publishes to the registry itself.
 
 ## Live verification
 

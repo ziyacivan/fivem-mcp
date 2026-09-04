@@ -31,7 +31,7 @@ did (see **Security** and `players`).
 - MCP: request cancellation honoured by every waiting tool; `outputSchema` + `structuredContent` for JSON-shaped tools; `ToolAnnotations` on all tools; logging capability (tool failures as warnings; `FIVEM_MCP_DEBUG=1` traces devcon/RCON).
 - Bridge: pending client ops expire (`mcpb_client_timeout_ms`), results fit one datagram (truncation marker, `poll` `max`), `players` identifiers opt-in, `nui_callback` timeout, `mcpb_verbose`.
 - Tests for config, server log tailer, hub dialing, cancellation, bridge hardening, docs drift (README tool table, `server.json` env list, bridge op lists, version sync).
-- CI on Windows + Linux, Node 22 + 24, coverage; tag-triggered release workflow (npm provenance, GitHub Release, MCP Registry); Dependabot.
+- CI on Windows + Linux, Node 22 + 24, coverage; tag-triggered release workflow (gate, GitHub Release from this changelog, MCP Registry registration — npm publishing stays manual); Dependabot.
 
 ### Changed
 - Toolchain: zod 4, Biome 2, Vitest 5, TypeScript 7; SDK `^1.30`.
