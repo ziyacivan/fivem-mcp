@@ -55,7 +55,12 @@ Registry (that last step is skipped with a notice if the version is not on npm y
 publishing, re-run it from Actions → Release → Run workflow with the tag).
 
 `npm publish` needs an interactive login (`npm login`); there is no NPM_TOKEN secret and
-the workflow never publishes to the registry itself.
+the workflow never publishes to the registry itself. Two consequences of publishing by
+hand: the account's 2FA (`auth-and-writes`) asks for a code, so pass `--otp=<code>`, and
+`publishConfig` must not set `provenance` — npm can only attest a build from a supported
+CI provider and fails with `Automatic provenance generation not supported for provider:
+null` anywhere else. The gate is already run by `prepublishOnly`; if the OTP window is
+tight, run the gate yourself and publish with `--ignore-scripts`.
 
 ## Live verification
 

@@ -85,8 +85,7 @@
   },
   "sideEffects": false,
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   },
   "optionalDependencies": {
     "koffi": "^3.2.1"
