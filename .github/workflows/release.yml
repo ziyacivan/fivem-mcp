@@ -1,12 +1,16 @@
 name: Release
 
 # Tag `vX.Y.Z` (after `pnpm version` bumped package.json / server.json / fxmanifest)
-# -> full gate -> npm publish with provenance (OIDC trusted publishing, no token)
-# -> GitHub Release with the changelog section -> MCP Registry publish.
+# -> full gate -> npm publish with provenance -> GitHub Release with the
+# changelog section -> MCP Registry publish.
 #
-# One-time setup: on npmjs.com, add this repository + workflow as a Trusted
-# Publisher for fivem-mcp-server; the MCP Registry step authenticates with the
-# GitHub OIDC token of this repo (mcp-publisher login github-oidc).
+# Auth is tokenless: npm OIDC trusted publishing and `mcp-publisher login
+# github-oidc` both use this workflow's GitHub identity, so no NPM_TOKEN secret
+# exists or is needed. One-time setup on npmjs.com: package settings ->
+# Publishing access -> Trusted Publisher -> GitHub Actions, repository
+# ziyacivan/fivem-mcp, workflow `.github/workflows/release.yml`.
+# Trusted publishing needs npm CLI >= 11.5, newer than the one bundled with the
+# runner's Node, hence the explicit upgrade below.
 
 on:
   push:
@@ -29,16 +33,20 @@ jobs:
           node-version: 22
           cache: pnpm
           registry-url: https://registry.npmjs.org
+      - name: Use an npm CLI that speaks OIDC trusted publishing
+        run: |
+          npm install -g npm@latest
+          npm --version
       - run: pnpm install --frozen-lockfile
       - run: pnpm run ci
       - name: Check the tag matches package.json
         run: |
           PKG=$(node -p "require('./package.json').version")
           test "v$PKG" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != package.json v$PKG"; exit 1; }
-      - name: Publish to npm (provenance)
-        run: npm publish --provenance --access public
+      - name: Publish to npm
+        # provenance comes from publishConfig in package.json
+        run: npm publish
       - name: Extract changelog section
-        id: notes
         run: node scripts/changelog-section.mjs "${GITHUB_REF_NAME#v}" > release-notes.md
       - uses: softprops/action-gh-release@v2
         with:

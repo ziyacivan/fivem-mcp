@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-04
+
+A correctness, performance and packaging pass over the whole server. No tool
+names, argument schemas or bridge wire formats changed; two bridge behaviours
+did (see **Security** and `players`).
+
 ### Security
 - `mcpb` bridge command is restricted to the console/RCON (source 0); players who type it are refused.
 - Console commands sent over RCON/devcon must be single-line (no CR/LF smuggling).
@@ -34,6 +40,7 @@ All notable changes to this project are documented here. The format follows
 - Console buffer is a fixed-slot ring (O(1) push, reverse tail); the server log tail parses newest-first; one RCON socket per client; devcon frame decoder joins chunks once per frame; devcon ports dialled in parallel.
 - Version is read from `package.json`; `pnpm version` syncs `server.json` and `bridge/fxmanifest.lua`.
 - Live scripts share `scripts/lib.mjs`, write to a temp folder, and run via `pnpm live:*`.
+- `.gitattributes` pins the working tree to LF, so `pnpm check` behaves the same on Windows checkouts (where `core.autocrlf` would otherwise rewrite every file) as it does on Linux.
 
 ## [0.5.0] - 2026-09-02
 
