@@ -1,6 +1,7 @@
 import { inflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
-import { cropRgb, downscaleRgb, encodePng } from "../src/win/png.js";
+import { cropRgb, downscaleRgb, encodePng, encodePngAsync, renderFrame } from "../src/win/png.js";
+import { bgraToRgb, measureBrightness } from "../src/win/win32.js";
 
 function readChunks(png: Buffer): Array<{ type: string; data: Buffer }> {
   const chunks: Array<{ type: string; data: Buffer }> = [];
@@ -110,5 +111,87 @@ describe("downscaleRgb", () => {
     expect(out.rgb.length).toBe(2 * 2 * 3);
     expect(out.rgb[0]).toBe(42);
     expect(out.rgb[9]).toBe(43);
+  });
+});
+
+describe("renderFrame (single-pass BGRA -> cropped, box-downscaled RGB)", () => {
+  function solid(w: number, h: number, b: number, g: number, r: number): Buffer {
+    const buf = Buffer.alloc(w * h * 4);
+    for (let i = 0; i < buf.length; i += 4) {
+      buf[i] = b;
+      buf[i + 1] = g;
+      buf[i + 2] = r;
+      buf[i + 3] = 255;
+    }
+    return buf;
+  }
+
+  it("converts BGRA to RGB and keeps the size when no downscale is needed", () => {
+    const out = renderFrame(solid(4, 2, 10, 20, 30), 4, 2, { maxSide: 900 });
+    expect([out.width, out.height]).toEqual([4, 2]);
+    expect(Array.from(out.rgb.subarray(0, 3))).toEqual([30, 20, 10]);
+    expect(out.rgb.length).toBe(4 * 2 * 3);
+  });
+
+  it("crops before scaling and averages the footprint of each output pixel", () => {
+    // 8x8 frame: left half pure red, right half pure blue (BGRA order).
+    const w = 8;
+    const bgra = Buffer.alloc(w * w * 4);
+    for (let y = 0; y < w; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        if (x < 4) bgra[i + 2] = 255;
+        else bgra[i] = 255;
+        bgra[i + 3] = 255;
+      }
+    }
+    const small = renderFrame(bgra, w, w, { maxSide: 2 });
+    expect([small.width, small.height]).toEqual([2, 2]);
+    expect(Array.from(small.rgb.subarray(0, 3))).toEqual([255, 0, 0]);
+    expect(Array.from(small.rgb.subarray(3, 6))).toEqual([0, 0, 255]);
+    const one = renderFrame(bgra, w, w, { maxSide: 1 });
+    expect(Array.from(one.rgb)).toEqual([128, 0, 128]);
+    const right = renderFrame(bgra, w, w, {
+      crop: { x: 4, y: 0, width: 4, height: 8 },
+      maxSide: 1,
+    });
+    expect(Array.from(right.rgb)).toEqual([0, 0, 255]);
+  });
+
+  it("matches cropRgb + bgraToRgb when no scaling happens", () => {
+    const w = 6;
+    const h = 5;
+    const bgra = Buffer.alloc(w * h * 4);
+    for (let i = 0; i < bgra.length; i++) bgra[i] = (i * 37) & 0xff;
+    const crop = { x: 1, y: 2, width: 3, height: 2 };
+    const direct = renderFrame(bgra, w, h, { crop, maxSide: 4096 });
+    const viaOld = cropRgb(bgraToRgb(bgra), w, h, crop);
+    expect(direct.width).toBe(viaOld.width);
+    expect(direct.height).toBe(viaOld.height);
+    expect(direct.rgb.equals(viaOld.rgb)).toBe(true);
+  });
+
+  it("rejects a crop outside the frame and a mismatched buffer", () => {
+    expect(() =>
+      renderFrame(solid(4, 4, 0, 0, 0), 4, 4, {
+        crop: { x: 10, y: 0, width: 2, height: 2 },
+        maxSide: 4,
+      }),
+    ).toThrow(/outside/);
+    expect(() => renderFrame(Buffer.alloc(3), 4, 4, { maxSide: 4 })).toThrow(/expected 64/);
+  });
+
+  it("encodePngAsync produces the same bytes as encodePng", async () => {
+    const rgb = Buffer.from([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    expect((await encodePngAsync(2, 2, rgb)).equals(encodePng(2, 2, rgb))).toBe(true);
+  });
+});
+
+describe("measureBrightness", () => {
+  it("is 0 for a black frame and 1 for a lit one, sampling sparsely", () => {
+    const black = Buffer.alloc(1920 * 1080 * 4);
+    expect(measureBrightness(black)).toBe(0);
+    const lit = Buffer.alloc(64 * 64 * 4, 200);
+    expect(measureBrightness(lit)).toBe(1);
   });
 });

@@ -8,9 +8,8 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { DEFAULTS } from "../defaults.js";
 import { forceQuitFiveM, launchFiveM } from "../launcher.js";
-import { type CropRect, cropRgb, downscaleRgb, encodePng } from "../win/png.js";
+import { type CropRect, encodePngAsync, renderFrame } from "../win/png.js";
 import {
-  bgraToRgb,
   captureWindow,
   findGameWindow,
   focusWindow,
@@ -257,14 +256,11 @@ export function registerWindowTools(server: McpServer, { config, hub }: ToolCont
     async (args, game) => {
       const cropRect = parseCrop(args.crop);
       const frame = captureWindow(game.hwnd);
-      const cropped = cropRgb(bgraToRgb(frame.pixels), frame.width, frame.height, cropRect);
-      const scaled = downscaleRgb(
-        cropped.rgb,
-        cropped.width,
-        cropped.height,
-        args.maxSide ?? DEFAULTS.screenshotMaxSide,
-      );
-      const png = encodePng(scaled.width, scaled.height, scaled.rgb);
+      const scaled = renderFrame(frame.pixels, frame.width, frame.height, {
+        crop: cropRect,
+        maxSide: args.maxSide ?? DEFAULTS.screenshotMaxSide,
+      });
+      const png = await encodePngAsync(scaled.width, scaled.height, scaled.rgb);
       return {
         content: [
           { type: "image", data: png.toString("base64"), mimeType: "image/png" },
@@ -289,7 +285,7 @@ export function registerWindowTools(server: McpServer, { config, hub }: ToolCont
       annotations: ACTS_SAFELY,
     },
     async (args) => {
-      pressKey(args.key, args.holdMs);
+      await pressKey(args.key, args.holdMs);
       return plain(`tapped ${args.key}`);
     },
   );

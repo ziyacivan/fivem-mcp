@@ -4,6 +4,7 @@
 
 import koffi from "koffi";
 import { DEFAULTS } from "../defaults.js";
+import { sleep } from "../util.js";
 import {
   buildKeyPress,
   buildKeyRelease,
@@ -38,6 +39,7 @@ function buildApi() {
     ShowWindow: user32.func("bool __stdcall ShowWindow(void* hwnd, int cmd)"),
     IsIconic: user32.func("bool __stdcall IsIconic(void* hwnd)"),
     IsWindowVisible: user32.func("bool __stdcall IsWindowVisible(void* hwnd)"),
+    IsWindow: user32.func("bool __stdcall IsWindow(void* hwnd)"),
     GetWindowRect: user32.func("bool __stdcall GetWindowRect(void* hwnd, void* rect)"),
     GetWindowTextW: user32.func("int __stdcall GetWindowTextW(void* hwnd, void* text, int max)"),
     GetWindowThreadProcessId: user32.func(
@@ -95,11 +97,12 @@ export interface WindowRect {
   bottom: number;
 }
 
+const TITLE_BUFFER = Buffer.alloc(512); // 256 UTF-16 units; reused across calls (single-threaded)
+
 function readWindowText(a: NonNullable<typeof api>, hwnd: bigint): string {
-  const buf = Buffer.alloc(512);
-  const len = a.GetWindowTextW(hwnd, buf, 256);
+  const len = a.GetWindowTextW(hwnd, TITLE_BUFFER, 256);
   if (len <= 0) return "";
-  return buf.toString("utf16le", 0, len * 2);
+  return TITLE_BUFFER.toString("utf16le", 0, len * 2);
 }
 
 function readWindowPid(a: NonNullable<typeof api>, hwnd: bigint): number {
@@ -121,8 +124,32 @@ export function isGameWindowTitle(title: string): boolean {
 /** The FiveM game window: titled per isGameWindowTitle, visible, with real area. */
 let enumProc: ReturnType<typeof koffi.proto> | null = null;
 
+/** Last window we found; re-validated on the next call before enumerating again. */
+let cachedGame: GameWindow | null = null;
+
+/**
+ * Find the FiveM game window. Every input/screenshot tool calls this, so the
+ * previous hit is checked first (IsWindow + visible + title still matches) and
+ * the full EnumWindows walk only runs when it has gone away.
+ */
 export function findGameWindow(): GameWindow | null {
   const a = need();
+  if (cachedGame) {
+    const { hwnd } = cachedGame;
+    if (a.IsWindow(hwnd) && a.IsWindowVisible(hwnd)) {
+      const title = readWindowText(a, hwnd);
+      if (isGameWindowTitle(title)) {
+        if (title !== cachedGame.title) cachedGame = { ...cachedGame, title };
+        return cachedGame;
+      }
+    }
+    cachedGame = null;
+  }
+  cachedGame = enumerateGameWindow(a);
+  return cachedGame;
+}
+
+function enumerateGameWindow(a: NonNullable<typeof api>): GameWindow | null {
   let found: GameWindow | null = null;
   if (!enumProc) enumProc = koffi.proto("bool EnumWindowsProc(void* hwnd, intptr_t param)");
   const callback = koffi.register((hwnd: bigint) => {
@@ -192,12 +219,14 @@ function sendInputs(buf: Buffer): void {
   }
 }
 
-export function pressKey(name: string, holdMs = 20): void {
-  sendInputs(Buffer.concat([buildKeyPress(name)]));
-  const until = Date.now() + holdMs;
-  while (Date.now() < until) {
-    /* bounded busy-wait keeps press/release tight enough for game polling */
-  }
+/**
+ * Tap a key: press, hold `holdMs`, release. The hold is an awaited timer, not a
+ * busy-wait: a spin would freeze the event loop (devcon reads, RCON replies,
+ * MCP requests) for up to the 5 s the tool allows.
+ */
+export async function pressKey(name: string, holdMs = 20): Promise<void> {
+  sendInputs(buildKeyPress(name));
+  await sleep(holdMs);
   sendInputs(buildKeyRelease(name));
 }
 
@@ -257,20 +286,13 @@ export function mouseMove(fields: {
 }
 
 export function mouseClick(button: "left" | "right", double = false): void {
-  const down = button === "left" ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_RIGHTDOWN;
-  const up = button === "left" ? MOUSEEVENTF_LEFTUP : MOUSEEVENTF_RIGHTUP;
-  const a = need();
-  const n = double ? 4 : 2;
-  const buf = Buffer.alloc(n * INPUT_SIZE);
-  const first = buildMouseInput({ flags: down });
-  first.copy(buf, 0);
-  buildMouseInput({ flags: up }).copy(buf, INPUT_SIZE);
-  if (double) {
-    first.copy(buf, 2 * INPUT_SIZE);
-    buildMouseInput({ flags: up }).copy(buf, 3 * INPUT_SIZE);
-  }
-  const sent = a.SendInput(n, buf, INPUT_SIZE);
-  if (sent !== n) throw new Error(`SendInput delivered ${sent}/${n} click events`);
+  const down = buildMouseInput({
+    flags: button === "left" ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_RIGHTDOWN,
+  });
+  const up = buildMouseInput({
+    flags: button === "left" ? MOUSEEVENTF_LEFTUP : MOUSEEVENTF_RIGHTUP,
+  });
+  sendInputs(Buffer.concat(double ? [down, up, down, up] : [down, up]));
 }
 
 export function mouseScroll(amount: number): void {
@@ -356,11 +378,15 @@ export function captureWindow(hwnd: bigint): CapturedFrame {
   }
 }
 
-function measureBrightness(bgra: Buffer): number {
+/** Fraction of lit pixels, sampled every 16th pixel: plenty to tell a black swapchain frame. */
+export function measureBrightness(bgra: Buffer): number {
+  const step = 4 * 16;
   let lit = 0;
-  const total = bgra.length / 4;
-  for (let i = 0; i < bgra.length; i += 4) {
-    if ((bgra[i] ?? 0) + (bgra[i + 1] ?? 0) + (bgra[i + 2] ?? 0) > DEFAULTS.litPixelMinSum) lit++;
+  let sampled = 0;
+  for (let i = 0; i + 2 < bgra.length; i += step) {
+    sampled++;
+    const sum = (bgra[i] as number) + (bgra[i + 1] as number) + (bgra[i + 2] as number);
+    if (sum > DEFAULTS.litPixelMinSum) lit++;
   }
-  return total === 0 ? 0 : lit / total;
+  return sampled === 0 ? 0 : lit / sampled;
 }
