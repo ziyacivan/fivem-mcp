@@ -1,0 +1,14 @@
+# The working tree is LF everywhere, whatever `core.autocrlf` says locally.
+# Biome formats with LF and .editorconfig declares LF, so a CRLF checkout (the
+# default on Windows, and on GitHub's Windows runners) would fail `pnpm check`
+# on every file. Pinning it here keeps the gate identical on every machine.
+* text=auto eol=lf
+
+# Lockfiles: same rule, but never diffed in review.
+pnpm-lock.yaml -diff linguist-generated
+
+# Anything binary that may land here later.
+*.png binary
+*.jpg binary
+*.ico binary
+*.exe binary
