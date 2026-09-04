@@ -11,28 +11,11 @@
 //    uses UDP." Server rate limit is 0.2/s, burst 5 until authorized.
 
 import dgram from "node:dgram";
-import { hashRageString } from "./hash.js";
-
-const OOB_PREFIX = Buffer.from([0xff, 0xff, 0xff, 0xff]);
-
-/** The server dispatches OOB packets by HashRageString of the key before the first space/newline. */
-export const RCON_OOB_KEY_HASH = hashRageString("rcon");
+import { DEFAULTS } from "../defaults.js";
+import { encodeOobRequest, sameHost, stripOobPrefix } from "./oob.js";
 
 export function encodeRconRequest(password: string, command: string): Buffer {
-  return Buffer.concat([OOB_PREFIX, Buffer.from(`rcon\n${password} ${command}`, "utf8")]);
-}
-
-/**
- * Does a reply's source address belong to the host we sent to? Hostnames are
- * resolved by the OS at send time, so a non-literal `host` cannot be compared
- * byte-for-byte; the port check still applies, and loopback names are matched
- * against their literals.
- */
-export function sameHost(replyAddress: string, requestedHost: string): boolean {
-  if (replyAddress === requestedHost) return true;
-  if (requestedHost === "localhost") return replyAddress === "127.0.0.1" || replyAddress === "::1";
-  // Not an IP literal we can compare — trust the OS resolution.
-  return !/^[\d.]+$|^[0-9a-f:]+$/i.test(requestedHost);
+  return encodeOobRequest("rcon", `${password} ${command}`);
 }
 
 export interface RconResponse {
@@ -41,14 +24,10 @@ export interface RconResponse {
 }
 
 export function parseRconResponse(data: Buffer): RconResponse {
-  let payload = data;
-  if (payload.length >= 4 && payload.readUInt32BE(0) === 0xffffffff) {
-    payload = payload.subarray(4);
-  }
-  const text = payload.toString("utf8");
+  const text = stripOobPrefix(data).toString("utf8");
   const match = /^(print|error)[ ]?([\s\S]*)$/.exec(text);
   if (!match) throw new Error(`unrecognized rcon response: ${JSON.stringify(text.slice(0, 60))}`);
-  return { kind: match[1] as "print" | "error", text: match[2] ?? "" };
+  return { kind: match[1] === "error" ? "error" : "print", text: match[2] ?? "" };
 }
 
 export interface RconOptions {
@@ -88,23 +67,28 @@ export class RconClient {
   }
 
   private execOne(command: string): Promise<string> {
-    const { host, port, password, timeoutMs = 5000 } = this.options;
+    const { host, port, password, timeoutMs = DEFAULTS.rconTimeoutMs } = this.options;
     const request = encodeRconRequest(password, command);
 
     return new Promise((resolve, reject) => {
       const socket = dgram.createSocket("udp4");
       let settled = false;
 
-      const cleanup = () => {
+      const finish = () => {
+        settled = true;
         clearTimeout(timer);
-        socket.removeAllListeners();
-        socket.close();
+        socket.removeAllListeners("message");
+        socket.on("error", () => undefined); // a late error must not throw out of close()
+        try {
+          socket.close();
+        } catch {
+          /* already closed */
+        }
       };
 
       const timer = setTimeout(() => {
         if (settled) return;
-        settled = true;
-        cleanup();
+        finish();
         reject(
           new RconError(
             `rcon command "${command}" timed out after ${timeoutMs}ms — ` +
@@ -118,16 +102,15 @@ export class RconClient {
         // Only the server we asked may answer: a datagram from anywhere else
         // would let a third party inject fabricated console output.
         if (rinfo.port !== port || !sameHost(rinfo.address, host)) return;
-        settled = true;
         let response: RconResponse;
         try {
           response = parseRconResponse(msg);
         } catch (error) {
-          cleanup();
+          finish();
           reject(error);
           return;
         }
-        cleanup();
+        finish();
         if (response.kind === "error") {
           reject(new RconError(response.text.trim()));
         } else {
@@ -137,16 +120,13 @@ export class RconClient {
 
       socket.on("error", (error) => {
         if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        socket.close();
+        finish();
         reject(new RconError(String(error)));
       });
 
       socket.send(request, port, host, (error) => {
         if (error && !settled) {
-          settled = true;
-          cleanup();
+          finish();
           reject(new RconError(String(error)));
         }
       });

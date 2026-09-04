@@ -8,6 +8,8 @@
 import { promises as fs } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import type { ConsoleLine } from "../console-buffer.js";
+import { DEFAULTS } from "../defaults.js";
+import { sleep } from "../util.js";
 
 // VT100/ANSI CSI (incl. private-mode params like ESC[?202h seen in FXServer's
 // redirected stdout) and OSC strings.
@@ -29,12 +31,6 @@ export interface ServerLogFilter {
   pattern?: string | undefined;
 }
 
-const TAIL_BYTES = 512 * 1024;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 /** Tail-based reader over the server's redirected stdout file. */
 export class ServerLogFile {
   constructor(readonly path: string) {}
@@ -49,13 +45,13 @@ export class ServerLogFile {
   }
 
   async tail(options: ServerLogFilter = {}): Promise<ConsoleLine[]> {
-    const { limit = 100, channel, contains, pattern } = options;
+    const { limit = DEFAULTS.readLimit, channel, contains, pattern } = options;
     let handle: fs.FileHandle | null = null;
     let text = "";
     try {
       handle = await fs.open(this.path, "r");
       const { size } = await handle.stat();
-      const start = Math.max(0, size - TAIL_BYTES);
+      const start = Math.max(0, size - DEFAULTS.logTailBytes);
       const buffer = Buffer.alloc(size - start);
       await handle.read(buffer, 0, buffer.length, start);
       text = buffer.toString("utf8");
@@ -93,7 +89,7 @@ export class ServerLogFile {
     options: { timeoutMs: number; pollMs?: number },
   ): Promise<ConsoleLine> {
     const regex = new RegExp(pattern);
-    const pollMs = options.pollMs ?? 150;
+    const pollMs = options.pollMs ?? DEFAULTS.logPollMs;
     const deadline = Date.now() + options.timeoutMs;
     let cursor = (await fs.stat(this.path).catch(() => null))?.size ?? 0;
     let partial = "";

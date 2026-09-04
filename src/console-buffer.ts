@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { DEFAULTS } from "./defaults.js";
 import type { DevconPrintLine } from "./protocol/devcon.js";
 
 export interface ConsoleLine extends DevconPrintLine {
@@ -50,7 +51,7 @@ export class ConsoleBuffer extends EventEmitter {
   }
 
   tail(options: TailOptions = {}): ConsoleLine[] {
-    const { afterSeq = 0, limit = 100, channel, contains, pattern } = options;
+    const { afterSeq = 0, limit = DEFAULTS.readLimit, channel, contains, pattern } = options;
     const needle = contains?.toLowerCase();
     const regex = pattern ? new RegExp(pattern) : undefined;
 

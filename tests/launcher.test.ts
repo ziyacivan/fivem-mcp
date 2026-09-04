@@ -32,10 +32,10 @@ describe("latestClientLog", () => {
     await fs.utimes(path.join(logs, "CitizenFX_log_2026-01-01T000000.log"), past, past);
     await fs.utimes(path.join(logs, "CitizenFX_log_2026-01-02T000000.log"), future, future);
 
-    expect(latestClientLog({ LOCALAPPDATA: root })).toBe(
+    expect(await latestClientLog({ LOCALAPPDATA: root })).toBe(
       path.join(logs, "CitizenFX_log_2026-01-02T000000.log"),
     );
-    expect(latestClientLog({ LOCALAPPDATA: path.join(root, "missing") })).toBeNull();
+    expect(await latestClientLog({ LOCALAPPDATA: path.join(root, "missing") })).toBeNull();
     await fs.rm(root, { recursive: true, force: true });
   });
 });

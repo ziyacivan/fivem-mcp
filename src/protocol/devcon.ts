@@ -13,6 +13,7 @@
 
 import { EventEmitter } from "node:events";
 import net from "node:net";
+import { DEFAULTS } from "../defaults.js";
 
 export const DEVCON_PROTOCOL = 211;
 /**
@@ -207,10 +208,10 @@ export class DevconConnection extends EventEmitter {
 
   private constructor(options: DevconConnectOptions) {
     super();
-    const { host, port, connectTimeoutMs = 5000 } = options;
+    const { host, port, connectTimeoutMs = DEFAULTS.devconConnectTimeoutMs } = options;
     const socket = net.connect({ host, port });
     this.socket = socket;
-    socket.setKeepAlive(true, 10_000);
+    socket.setKeepAlive(true, DEFAULTS.devconKeepaliveMs);
     socket.setTimeout(connectTimeoutMs);
     socket.on("connect", () => {
       socket.setTimeout(0);
@@ -231,17 +232,21 @@ export class DevconConnection extends EventEmitter {
       /* surfaced through "close"; an unhandled 'error' would crash the process */
       this.destroy();
     });
-    this.probeTimer = setInterval(() => this.probeTick(), 5000);
+    this.probeTimer = setInterval(() => this.probeTick(), DEFAULTS.devconProbeTickMs);
     this.probeTimer.unref();
   }
 
   private probeTick(): void {
-    if (this.probePending && Date.now() - this.probeAt > 3000) {
+    if (this.probePending && Date.now() - this.probeAt > DEFAULTS.devconProbeGraceMs) {
       // hello unanswered — the socket is a corpse
       this.destroy();
       return;
     }
-    if (!this.probePending && Date.now() - this.lastRx > 15_000 && this.socket.writable) {
+    if (
+      !this.probePending &&
+      Date.now() - this.lastRx > DEFAULTS.devconQuietBeforeProbeMs &&
+      this.socket.writable
+    ) {
       this.probePending = true;
       this.probeAt = Date.now();
       this.socket.write(encodeHello());
@@ -255,7 +260,7 @@ export class DevconConnection extends EventEmitter {
    */
   static connect(options: DevconConnectOptions): Promise<DevconConnection> {
     const connection = new DevconConnection(options);
-    const { connectTimeoutMs = 5000 } = options;
+    const { connectTimeoutMs = DEFAULTS.devconConnectTimeoutMs } = options;
     return new Promise((resolve, reject) => {
       const fail = (error: Error) => {
         cleanup();

@@ -3,7 +3,7 @@
 // reply (server ops print inside the capture scope) or the server log tail
 // (client ops come back as MCP_RESULT lines).
 
-import type { Target } from "./hub.js";
+import type { Target } from "./types.js";
 
 export interface BridgeResult {
   ok: boolean;

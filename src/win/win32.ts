@@ -3,6 +3,7 @@
 // tests and non-Windows installs — the DLLs load on first use.
 
 import koffi from "koffi";
+import { DEFAULTS } from "../defaults.js";
 import {
   buildKeyPress,
   buildKeyRelease,
@@ -48,7 +49,6 @@ function buildApi() {
       "bool __stdcall AttachThreadInput(uint32 a, uint32 b, bool attach)",
     ),
     GetCurrentThreadId: kernel32.func("uint32 __stdcall GetCurrentThreadId()"),
-    GetWindowThreadProcessIdOfForeground: null, // computed via the two above
     GetWindowDC: user32.func("void* __stdcall GetWindowDC(void* hwnd)"),
     ReleaseDC: user32.func("int __stdcall ReleaseDC(void* hwnd, void* hdc)"),
     GetDC: user32.func("void* __stdcall GetDC(void* hwnd)"),
@@ -75,6 +75,11 @@ function need(): NonNullable<typeof api> {
   }
   if (!api) api = buildApi();
   return api;
+}
+
+/** koffi hands `void*` results back as bigint-compatible values; normalise once here. */
+function asHwnd(value: unknown): bigint {
+  return typeof value === "bigint" ? value : BigInt((value as number | bigint | null) ?? 0);
 }
 
 export interface GameWindow {
@@ -126,7 +131,7 @@ export function findGameWindow(): GameWindow | null {
     const title = readWindowText(a, hwnd);
     if (!isGameWindowTitle(title)) return true;
     const rect = getWindowRectOf(hwnd);
-    if (!rect || rect.right - rect.left < 64) return true;
+    if (!rect || rect.right - rect.left < DEFAULTS.minGameWindowWidth) return true;
     found = { hwnd, title, pid: readWindowPid(a, hwnd) };
     return false; // stop enumerating
   }, koffi.pointer(enumProc));
@@ -153,7 +158,7 @@ export function getWindowRectOf(hwnd: bigint): WindowRect | null {
 export function foregroundHwnd(): bigint | null {
   const a = need();
   const hwnd = a.GetForegroundWindow();
-  return hwnd ? BigInt(hwnd as unknown as bigint) : null;
+  return hwnd ? asHwnd(hwnd) : null;
 }
 
 const SW_RESTORE = 9;
@@ -166,13 +171,13 @@ export function focusWindow(hwnd: bigint): boolean {
   if (a.SetForegroundWindow(hwnd)) return true;
   const fg = a.GetForegroundWindow();
   if (!fg) return false;
-  const fgThread = a.GetWindowThreadProcessId(BigInt(fg as unknown as bigint), Buffer.alloc(4));
+  const fgThread = a.GetWindowThreadProcessId(asHwnd(fg), Buffer.alloc(4));
   const selfThread = a.GetCurrentThreadId();
   a.AttachThreadInput(fgThread, selfThread, true);
   const ok = a.SetForegroundWindow(hwnd);
   a.AttachThreadInput(fgThread, selfThread, false);
   if (!ok) a.SwitchToThisWindow(hwnd, true);
-  return ok || BigInt(a.GetForegroundWindow() ?? 0n) === hwnd;
+  return ok || asHwnd(a.GetForegroundWindow()) === hwnd;
 }
 
 function sendInputs(buf: Buffer): void {
@@ -330,7 +335,7 @@ export function captureWindow(hwnd: bigint): CapturedFrame {
     let ok = a.PrintWindow(hwnd, hdcMem, PW_RENDERFULLCONTENT);
     a.GetDIBits(hdcMem, hbmp, 0, h, bits, bmi, 0);
     let brightness = measureBrightness(bits);
-    if (!ok || brightness < 0.02) {
+    if (!ok || brightness < DEFAULTS.blackFrameThreshold) {
       // GTA renders through a flip-model swapchain: PrintWindow can hand back a
       // black frame. Screen BitBlt then captures what the player actually sees —
       // the window must be unoccluded (hence ensureFocused at the tool layer).
@@ -355,7 +360,7 @@ function measureBrightness(bgra: Buffer): number {
   let lit = 0;
   const total = bgra.length / 4;
   for (let i = 0; i < bgra.length; i += 4) {
-    if ((bgra[i] ?? 0) + (bgra[i + 1] ?? 0) + (bgra[i + 2] ?? 0) > 24) lit++;
+    if ((bgra[i] ?? 0) + (bgra[i + 1] ?? 0) + (bgra[i + 2] ?? 0) > DEFAULTS.litPixelMinSum) lit++;
   }
   return total === 0 ? 0 : lit / total;
 }

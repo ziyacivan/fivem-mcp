@@ -1,13 +1,16 @@
 import { spawn } from "node:child_process";
-import fs from "node:fs";
+import fs, { promises as fsp } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+
+function localAppData(env: NodeJS.ProcessEnv): string {
+  return env.LOCALAPPDATA ?? path.join(os.homedir(), "AppData", "Local");
+}
 
 /** Override with FIVEM_EXECUTABLE for non-default installs. */
 export function fivemExecutable(env: NodeJS.ProcessEnv = process.env): string {
   if (env.FIVEM_EXECUTABLE) return env.FIVEM_EXECUTABLE;
-  const local = env.LOCALAPPDATA ?? path.join(os.homedir(), "AppData", "Local");
-  return path.join(local, "FiveM", "FiveM.exe");
+  return path.join(localAppData(env), "FiveM", "FiveM.exe");
 }
 
 export function buildConnectArgument(host: string): string {
@@ -41,22 +44,26 @@ export function forceQuitFiveM(): Promise<number> {
   });
 }
 
-/** Newest CitizenFX log the game client writes under the FiveM install. */
-export function latestClientLog(env: NodeJS.ProcessEnv = process.env): string | null {
-  const local = env.LOCALAPPDATA ?? path.join(os.homedir(), "AppData", "Local");
-  const dir = path.join(local, "FiveM", "FiveM.app", "logs");
-  let entries: fs.Dirent[];
+const CLIENT_LOG = /^CitizenFX_log_.*\.log$/;
+
+/**
+ * Newest CitizenFX log the game client writes under the FiveM install. The
+ * file names embed their creation timestamp (`CitizenFX_log_2026-09-02T…`),
+ * so the lexically greatest name is the newest — no stat() per file needed.
+ */
+export async function latestClientLog(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | null> {
+  const dir = path.join(localAppData(env), "FiveM", "FiveM.app", "logs");
+  let names: string[];
   try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
+    names = (await fsp.readdir(dir, { withFileTypes: true }))
+      .filter((entry) => entry.isFile() && CLIENT_LOG.test(entry.name))
+      .map((entry) => entry.name);
   } catch {
     return null;
   }
-  let newest: { name: string; mtimeMs: number } | null = null;
-  for (const entry of entries) {
-    if (!entry.isFile() || !/^CitizenFX_log_.*\.log$/.test(entry.name)) continue;
-    const full = path.join(dir, entry.name);
-    const mtimeMs = fs.statSync(full).mtimeMs;
-    if (!newest || mtimeMs > newest.mtimeMs) newest = { name: entry.name, mtimeMs };
-  }
-  return newest ? path.join(dir, newest.name) : null;
+  if (names.length === 0) return null;
+  names.sort();
+  return path.join(dir, names[names.length - 1] ?? "");
 }

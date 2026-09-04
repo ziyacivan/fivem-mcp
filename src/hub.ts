@@ -8,12 +8,15 @@ import {
 } from "./bridge-protocol.js";
 import type { Config } from "./config.js";
 import { ConsoleBuffer, type ConsoleLine } from "./console-buffer.js";
+import { DEFAULTS } from "./defaults.js";
 import { DevconConnection } from "./protocol/devcon.js";
 import { queryServerInfo } from "./protocol/oob.js";
 import { RconClient } from "./protocol/rcon.js";
 import { ServerLogFile } from "./protocol/server-log.js";
+import type { Target } from "./types.js";
+import { errorMessage, sleep } from "./util.js";
 
-export type Target = "server" | "client";
+export type { Target } from "./types.js";
 
 export interface ClientStatus {
   connected: boolean;
@@ -24,7 +27,16 @@ export interface ClientStatus {
   lastError: string | null;
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+export interface HubStatus {
+  client: ClientStatus;
+  server: {
+    rcon: { configured: boolean; address: string };
+    logFile: { path: string; exists: boolean } | null;
+  };
+}
+
+const SERVER_LOG_HINT =
+  "server console needs FIVEM_SERVER_LOG pointed at FXServer's redirected stdout (no server devcon on modern builds)";
 
 /**
  * Owns the live state: one lazy devcon connection to the FiveM client console,
@@ -50,6 +62,17 @@ export class Hub {
       password: config.rconPassword ?? "",
     });
     this.serverLog = config.serverLogFile ? new ServerLogFile(config.serverLogFile) : null;
+  }
+
+  /** Why the client console is not live right now, if it is not. */
+  get lastClientError(): string | null {
+    return this.clientLastError;
+  }
+
+  /** The server log tailer, or a clear error about how to enable it. */
+  requireServerLog(): ServerLogFile {
+    if (!this.serverLog) throw new Error(SERVER_LOG_HINT);
+    return this.serverLog;
   }
 
   /**
@@ -84,13 +107,13 @@ export class Hub {
       // "error"; without a listener that would throw out of the socket callback
       // and take the whole MCP process down.
       connection.on("error", (error: unknown) => {
-        this.clientLastError = `devcon protocol error: ${error instanceof Error ? error.message : String(error)}`;
+        this.clientLastError = `devcon protocol error: ${errorMessage(error)}`;
       });
       this.clientConnection = connection;
       this.clientLastError = null;
       return connection;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       this.clientLastError = message;
       const ports = this.config.clientDevconPorts.join("/");
       const hint =
@@ -145,7 +168,7 @@ export class Hub {
     extra?: Record<string, unknown>;
     timeoutMs?: number;
   }): Promise<BridgeResult> {
-    const { target, op, src = null, extra = {}, timeoutMs = 8000 } = options;
+    const { target, op, src = null, extra = {}, timeoutMs = DEFAULTS.bridgeTimeoutMs } = options;
     if (!this.rcon.isConfigured) {
       throw new Error("the bridge drives its server half over RCON — set FIVEM_RCON_PASSWORD");
     }
@@ -155,7 +178,10 @@ export class Hub {
     const legacyWait =
       target === "client" && this.serverLog
         ? this.serverLog
-            .waitFor(`MCP_RESULT ${id}`, { timeoutMs: timeoutMs + 1500, pollMs: 150 })
+            .waitFor(`MCP_RESULT ${id}`, {
+              timeoutMs: timeoutMs + DEFAULTS.bridgeLegacySlackMs,
+              pollMs: DEFAULTS.logPollMs,
+            })
             .catch(() => null)
         : null;
 
@@ -177,7 +203,7 @@ export class Hub {
     }
 
     const deadline = Date.now() + timeoutMs;
-    let delay = 100;
+    let delay: number = DEFAULTS.bridgePollInitialMs;
     let legacy = false;
     for (;;) {
       const buffered = this.bridgeInbox.get(id);
@@ -206,7 +232,7 @@ export class Hub {
       if (mine) return mine;
       if (Date.now() >= deadline) break;
       await sleep(Math.min(delay, deadline - Date.now()));
-      delay = Math.min(1000, Math.round(delay * 1.5));
+      delay = Math.min(DEFAULTS.bridgePollMaxMs, Math.round(delay * DEFAULTS.bridgePollBackoff));
     }
     const hint = legacy
       ? "the legacy log tail saw no MCP_RESULT line — check FIVEM_SERVER_LOG points at the live stdout"
@@ -250,7 +276,7 @@ export class Hub {
     return { entries: [], legacy: false };
   }
 
-  async status(): Promise<Record<string, unknown>> {
+  async status(): Promise<HubStatus> {
     const connection = this.clientConnection;
     const alive = connection?.isReady ?? false;
     return {
@@ -261,7 +287,7 @@ export class Hub {
         commands: connection?.commands.size ?? 0,
         bufferedLines: this.clientBuffer.size,
         lastError: this.clientLastError,
-      } satisfies ClientStatus,
+      },
       server: {
         rcon: {
           configured: this.rcon.isConfigured,

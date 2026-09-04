@@ -7,12 +7,31 @@
 //  - code/components/citizen-server-impl/include/outofbandhandlers/GetInfoOutOfBand.h
 
 import dgram from "node:dgram";
-import { sameHost } from "./rcon.js";
+import { DEFAULTS } from "../defaults.js";
 
-const OOB_PREFIX = Buffer.from([0xff, 0xff, 0xff, 0xff]);
+/** Every OOB datagram, request or reply, starts with these four bytes. */
+export const OOB_PREFIX = Buffer.from([0xff, 0xff, 0xff, 0xff]);
 
 export function encodeOobRequest(key: string, payload: string): Buffer {
   return Buffer.concat([OOB_PREFIX, Buffer.from(`${key}\n${payload}`, "utf8")]);
+}
+
+/** The reply payload with the 0xFFFFFFFF prefix removed (tolerates its absence). */
+export function stripOobPrefix(data: Buffer): Buffer {
+  return data.length >= 4 && data.readUInt32BE(0) === 0xffffffff ? data.subarray(4) : data;
+}
+
+/**
+ * Does a reply's source address belong to the host we sent to? Hostnames are
+ * resolved by the OS at send time, so a non-literal `host` cannot be compared
+ * byte-for-byte; the port check still applies, and loopback names are matched
+ * against their literals.
+ */
+export function sameHost(replyAddress: string, requestedHost: string): boolean {
+  if (replyAddress === requestedHost) return true;
+  if (requestedHost === "localhost") return replyAddress === "127.0.0.1" || replyAddress === "::1";
+  // Not an IP literal we can compare — trust the OS resolution.
+  return !/^[\d.]+$|^[0-9a-f:]+$/i.test(requestedHost);
 }
 
 /** `infoResponse\n\hostname\Foo\clients\0\...` -> flat key/value map. */
@@ -23,7 +42,7 @@ export function parseInfoResponse(text: string): Record<string, string> {
   if (body.startsWith("\\")) tokens.shift();
   const info: Record<string, string> = {};
   for (let i = 0; i + 1 < tokens.length; i += 2) {
-    info[tokens[i] as string] = tokens[i + 1] as string;
+    info[tokens[i] ?? ""] = tokens[i + 1] ?? "";
   }
   return info;
 }
@@ -36,15 +55,24 @@ export interface OobOptions {
 
 /** Sends one OOB datagram, resolves with the first reply's payload (prefix stripped). */
 export function oobQuery(key: string, payload: string, options: OobOptions): Promise<string> {
-  const { host, port, timeoutMs = 3000 } = options;
+  const { host, port, timeoutMs = DEFAULTS.oobTimeoutMs } = options;
   return new Promise((resolve, reject) => {
     const socket = dgram.createSocket("udp4");
     let settled = false;
-    const fail = (error: unknown) => {
-      if (settled) return;
+    const finish = () => {
       settled = true;
       clearTimeout(timer);
-      socket.close();
+      socket.removeAllListeners("message");
+      socket.on("error", () => undefined); // a late error must not throw out of close()
+      try {
+        socket.close();
+      } catch {
+        /* already closed */
+      }
+    };
+    const fail = (error: unknown) => {
+      if (settled) return;
+      finish();
       reject(error instanceof Error ? error : new Error(String(error)));
     };
     const timer = setTimeout(
@@ -54,14 +82,8 @@ export function oobQuery(key: string, payload: string, options: OobOptions): Pro
     socket.on("message", (msg, rinfo) => {
       if (settled) return;
       if (rinfo.port !== port || !sameHost(rinfo.address, host)) return; // spoofed reply
-      settled = true;
-      clearTimeout(timer);
-      let payloadReply = msg;
-      if (payloadReply.length >= 4 && payloadReply.readUInt32BE(0) === 0xffffffff) {
-        payloadReply = payloadReply.subarray(4);
-      }
-      const text = payloadReply.toString("utf8");
-      socket.close();
+      const text = stripOobPrefix(msg).toString("utf8");
+      finish();
       resolve(text);
     });
     socket.on("error", fail);

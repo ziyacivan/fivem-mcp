@@ -19,7 +19,7 @@ export const INPUT_KEYBOARD = 1;
 
 // Scan codes are the Set 1 make codes; GTA reads the keyboard through DirectInput
 // and raw input, which key off the scan code, not the virtual key.
-const KEYS: Record<string, KeySpec> = {
+const KEYS: Readonly<Record<string, KeySpec>> = {
   escape: { vk: 0x1b, scan: 0x01 },
   esc: { vk: 0x1b, scan: 0x01 },
   "1": { vk: 0x31, scan: 0x02 },
@@ -101,17 +101,12 @@ export function keySpec(name: string): KeySpec | null {
   return KEYS[name.toLowerCase()] ?? null;
 }
 
-function inputBuffer(): Buffer {
-  const buf = Buffer.alloc(INPUT_SIZE);
-  return buf;
-}
-
 /** INPUT.keyboard bytes: wVk@8 wScan@10 dwFlags@12 time@16 dwExtraInfo@24 (x64). */
 export function buildKeyboardInput(
   spec: KeySpec,
   options: { up?: boolean; unicodeChar?: number } = {},
 ): Buffer {
-  const buf = inputBuffer();
+  const buf = Buffer.alloc(INPUT_SIZE);
   buf.writeUInt32LE(INPUT_KEYBOARD, 0);
   if (options.unicodeChar !== undefined) {
     buf.writeUInt16LE(0, 8);
@@ -144,20 +139,16 @@ export function buildKeyRelease(name: string): Buffer {
 
 /** Press+release pairs for literal text via KEYEVENTF_UNICODE (what console/NUI inputs read). */
 export function buildUnicodeText(text: string): Buffer {
-  const units: number[] = [];
-  for (const ch of text) units.push(...toUtf16Units(ch));
-  const parts: Buffer[] = [];
-  for (const unit of units) {
-    parts.push(buildKeyboardInput({ vk: 0, scan: 0 }, { unicodeChar: unit }));
-    parts.push(buildKeyboardInput({ vk: 0, scan: 0 }, { unicodeChar: unit, up: true }));
+  // One down+up pair per UTF-16 code unit — surrogate pairs are two units each,
+  // which is exactly what KEYEVENTF_UNICODE expects.
+  const out = Buffer.alloc(text.length * 2 * INPUT_SIZE);
+  for (let i = 0; i < text.length; i++) {
+    const unit = text.charCodeAt(i);
+    const none: KeySpec = { vk: 0, scan: 0 };
+    buildKeyboardInput(none, { unicodeChar: unit }).copy(out, i * 2 * INPUT_SIZE);
+    buildKeyboardInput(none, { unicodeChar: unit, up: true }).copy(out, (i * 2 + 1) * INPUT_SIZE);
   }
-  return Buffer.concat(parts);
-}
-
-function toUtf16Units(text: string): number[] {
-  const units: number[] = [];
-  for (let i = 0; i < text.length; i++) units.push(text.charCodeAt(i));
-  return units;
+  return out;
 }
 
 // MOUSE flags
@@ -176,7 +167,7 @@ export function buildMouseInput(fields: {
   data?: number;
   flags: number;
 }): Buffer {
-  const buf = inputBuffer();
+  const buf = Buffer.alloc(INPUT_SIZE);
   buf.writeUInt32LE(INPUT_MOUSE, 0);
   buf.writeInt32LE(fields.dx ?? 0, 8);
   buf.writeInt32LE(fields.dy ?? 0, 12);
