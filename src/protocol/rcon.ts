@@ -12,6 +12,7 @@
 
 import dgram from "node:dgram";
 import { DEFAULTS } from "../defaults.js";
+import { debug } from "../log.js";
 import { encodeOobRequest, sameHost, stripOobPrefix } from "./oob.js";
 
 export function encodeRconRequest(password: string, command: string): Buffer {
@@ -69,6 +70,7 @@ export class RconClient {
   private execOne(command: string): Promise<string> {
     const { host, port, password, timeoutMs = DEFAULTS.rconTimeoutMs } = this.options;
     const request = encodeRconRequest(password, command);
+    debug("rcon", `-> ${command}`);
 
     return new Promise((resolve, reject) => {
       const socket = dgram.createSocket("udp4");
@@ -111,6 +113,7 @@ export class RconClient {
           return;
         }
         finish();
+        debug("rcon", `<- ${response.kind} ${response.text.length}B`);
         if (response.kind === "error") {
           reject(new RconError(response.text.trim()));
         } else {

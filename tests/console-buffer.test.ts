@@ -73,3 +73,33 @@ describe("ConsoleBuffer", () => {
     expect(empty).toEqual([]);
   });
 });
+
+describe("ConsoleBuffer cancellation", () => {
+  it("waitFor rejects promptly when the signal aborts and leaves no listener behind", async () => {
+    const buffer = new ConsoleBuffer(10);
+    const controller = new AbortController();
+    const pending = buffer.waitFor("never", { timeoutMs: 60_000, signal: controller.signal });
+    expect(buffer.listenerCount("line")).toBe(1);
+    controller.abort(new Error("client cancelled"));
+    await expect(pending).rejects.toThrow(/client cancelled/);
+    expect(buffer.listenerCount("line")).toBe(0);
+  });
+
+  it("waitFor on an already-aborted signal rejects without subscribing", async () => {
+    const buffer = new ConsoleBuffer(10);
+    await expect(
+      buffer.waitFor("x", { timeoutMs: 1000, signal: AbortSignal.abort() }),
+    ).rejects.toThrow();
+    expect(buffer.listenerCount("line")).toBe(0);
+  });
+
+  it("waitForQuiet resolves with what it has when the signal aborts", async () => {
+    const buffer = new ConsoleBuffer(10);
+    const controller = new AbortController();
+    const pending = buffer.waitForQuiet(0, 5_000, 60_000, controller.signal);
+    buffer.push({ channel: "c", message: "partial" });
+    controller.abort();
+    expect((await pending).map((l) => l.message)).toEqual(["partial"]);
+    expect(buffer.listenerCount("line")).toBe(0);
+  });
+});

@@ -98,3 +98,22 @@ describe("ServerLogFile", () => {
     );
   });
 });
+
+describe("ServerLogFile cancellation", () => {
+  it("waitFor stops polling as soon as the signal aborts", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "fivem-serverlog-abort-"));
+    const file = path.join(dir, "server.log");
+    await fs.writeFile(file, "", "utf8");
+    const controller = new AbortController();
+    const started = Date.now();
+    const pending = new ServerLogFile(file).waitFor("never", {
+      timeoutMs: 60_000,
+      pollMs: 20,
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(new Error("cancelled by client")), 50);
+    await expect(pending).rejects.toThrow(/cancelled by client/);
+    expect(Date.now() - started).toBeLessThan(5_000);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+});

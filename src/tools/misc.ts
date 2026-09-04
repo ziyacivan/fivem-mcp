@@ -4,7 +4,7 @@ import { DEFAULTS } from "../defaults.js";
 import { latestClientLog } from "../launcher.js";
 import { ServerLogFile } from "../protocol/server-log.js";
 import { sleep } from "../util.js";
-import { compileUserRegex, defineTool, plain, text } from "./_shared.js";
+import { compileUserRegex, defineTool, plain, READ_ONLY, structured } from "./_shared.js";
 
 export function registerMiscTools(server: McpServer): void {
   defineTool(
@@ -14,9 +14,10 @@ export function registerMiscTools(server: McpServer): void {
       title: "Pause",
       description: "Sleep between actions — loading screens, walk cycles, held-key sequences.",
       inputSchema: { ms: z.number().int().min(0).max(120000) },
+      annotations: READ_ONLY,
     },
-    async (args) => {
-      await sleep(args.ms);
+    async (args, extra) => {
+      await sleep(args.ms, extra.signal);
       return plain(`waited ${args.ms}ms`);
     },
   );
@@ -40,6 +41,8 @@ export function registerMiscTools(server: McpServer): void {
         contains: z.string().optional(),
         pattern: z.string().optional(),
       },
+      outputSchema: { file: z.string(), matched: z.number().int(), lines: z.array(z.string()) },
+      annotations: READ_ONLY,
     },
     async (args) => {
       if (args.pattern !== undefined) compileUserRegex(args.pattern);
@@ -54,7 +57,7 @@ export function registerMiscTools(server: McpServer): void {
         contains: args.contains,
         pattern: args.pattern,
       });
-      return text({
+      return structured({
         file,
         matched: lines.length,
         lines: lines.map((l) => `${l.channel ? `[${l.channel}] ` : ""}${l.message}`),

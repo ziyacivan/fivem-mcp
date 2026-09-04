@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Config } from "./config.js";
 import type { Hub } from "./hub.js";
+import { attachMcpLogging } from "./log.js";
 import { registerPrompts } from "./prompts.js";
 import { registerBridgeTools } from "./tools/bridge.js";
 import { registerConsoleTools } from "./tools/console.js";
@@ -15,7 +16,11 @@ export const PACKAGE_VERSION: string = (
 
 /** Compose the MCP server: tool groups live in ./tools, prompts in ./prompts. */
 export function buildMcpServer(config: Config, hub: Hub): McpServer {
-  const server = new McpServer({ name: "fivem-mcp-server", version: PACKAGE_VERSION });
+  const server = new McpServer(
+    { name: "fivem-mcp-server", version: PACKAGE_VERSION },
+    { capabilities: { logging: {} } },
+  );
+  attachMcpLogging(server);
   const context = { config, hub };
   registerConsoleTools(server, context);
   registerWindowTools(server, context);

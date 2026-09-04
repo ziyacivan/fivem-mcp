@@ -72,7 +72,7 @@ afterAll(async () => {
 });
 
 describe("MCP surface", () => {
-  it("exposes the full v0.3 tool surface", async () => {
+  it("exposes the full tool surface", async () => {
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       "bridge",
@@ -99,6 +99,67 @@ describe("MCP surface", () => {
       "wait_for_console",
       "window_status",
     ]);
+  });
+
+  it("every tool carries annotations; JSON-shaped tools declare an outputSchema", async () => {
+    const { tools } = await client.listTools();
+    for (const tool of tools) {
+      expect(tool.annotations, tool.name).toBeDefined();
+      expect(typeof tool.annotations?.readOnlyHint, tool.name).toBe("boolean");
+      expect(tool.annotations?.openWorldHint, tool.name).toBe(false);
+    }
+    const byName = new Map(tools.map((tool) => [tool.name, tool]));
+    for (const name of [
+      "status",
+      "server_info",
+      "read_console",
+      "wait_for_console",
+      "list_commands",
+      "window_status",
+      "read_client_log",
+      "bridge",
+    ]) {
+      expect(byName.get(name)?.outputSchema, name).toBeDefined();
+    }
+    expect(byName.get("status")?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.get("server_command")?.annotations?.destructiveHint).toBe(true);
+    expect(byName.get("quit_game")?.annotations?.destructiveHint).toBe(true);
+    expect(byName.get("press_key")?.annotations?.destructiveHint).toBe(false);
+  });
+
+  it("structured results carry structuredContent that matches the text fallback", async () => {
+    const result = await call("status", {});
+    expect(result.structuredContent).toBeDefined();
+    expect(result.structuredContent).toEqual(JSON.parse(resultText(result)));
+    expect(
+      (result.structuredContent as { server: { rcon: { configured: boolean } } }).server.rcon
+        .configured,
+    ).toBe(true);
+  });
+
+  it("a cancelled wait_for_console stops waiting instead of running to its timeout", async () => {
+    const controller = new AbortController();
+    const started = Date.now();
+    const pending = client.callTool(
+      {
+        name: "wait_for_console",
+        arguments: { target: "server", pattern: "never-ever", timeoutMs: 60_000 },
+      },
+      undefined,
+      { signal: controller.signal },
+    );
+    setTimeout(() => controller.abort(), 100);
+    await expect(pending).rejects.toThrow();
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
+  it("bridge rejects an op that belongs to the other target", async () => {
+    const result = await call("bridge", { target: "server", op: "teleport" });
+    expect(result.isError).toBe(true);
+    expect(resultText(result)).toMatch(/not a server op/);
+    const noSrc = await call("bridge", { target: "client", op: "position" });
+    expect(noSrc.isError).toBe(true);
+    expect(resultText(noSrc)).toMatch(/needs src/);
   });
 
   it("window tools are registered everywhere and report the platform honestly", async () => {

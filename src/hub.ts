@@ -14,7 +14,7 @@ import { queryServerInfo } from "./protocol/oob.js";
 import { RconClient } from "./protocol/rcon.js";
 import { ServerLogFile } from "./protocol/server-log.js";
 import type { Target } from "./types.js";
-import { errorMessage, sleep } from "./util.js";
+import { abortError, errorMessage, sleep } from "./util.js";
 
 export type { Target } from "./types.js";
 
@@ -127,7 +127,11 @@ export class Hub {
   /** Type a command into the client's F8 console and collect the printed lines. */
   async runClientCommand(
     command: string,
-    overrides: { quietMs?: number | undefined; timeoutMs?: number | undefined } = {},
+    overrides: {
+      quietMs?: number | undefined;
+      timeoutMs?: number | undefined;
+      signal?: AbortSignal | undefined;
+    } = {},
   ): Promise<ConsoleLine[]> {
     const connection = await this.ensureClient();
     const beforeSeq = this.clientBuffer.latestSeq;
@@ -136,6 +140,7 @@ export class Hub {
       beforeSeq,
       overrides.quietMs ?? this.config.quietMs,
       overrides.timeoutMs ?? this.config.commandTimeoutMs,
+      overrides.signal,
     );
   }
 
@@ -167,8 +172,17 @@ export class Hub {
     src?: number | null | undefined;
     extra?: Record<string, unknown>;
     timeoutMs?: number;
+    /** Cancels the client-op wait (the MCP request was cancelled). */
+    signal?: AbortSignal | undefined;
   }): Promise<BridgeResult> {
-    const { target, op, src = null, extra = {}, timeoutMs = DEFAULTS.bridgeTimeoutMs } = options;
+    const {
+      target,
+      op,
+      src = null,
+      extra = {},
+      timeoutMs = DEFAULTS.bridgeTimeoutMs,
+      signal,
+    } = options;
     if (!this.rcon.isConfigured) {
       throw new Error("the bridge drives its server half over RCON — set FIVEM_RCON_PASSWORD");
     }
@@ -181,6 +195,7 @@ export class Hub {
             .waitFor(`MCP_RESULT ${id}`, {
               timeoutMs: timeoutMs + DEFAULTS.bridgeLegacySlackMs,
               pollMs: DEFAULTS.logPollMs,
+              signal,
             })
             .catch(() => null)
         : null;
@@ -206,6 +221,7 @@ export class Hub {
     let delay: number = DEFAULTS.bridgePollInitialMs;
     let legacy = false;
     for (;;) {
+      if (signal?.aborted) throw abortError(signal);
       const buffered = this.bridgeInbox.get(id);
       if (buffered) {
         this.bridgeInbox.delete(id);
@@ -231,7 +247,7 @@ export class Hub {
       }
       if (mine) return mine;
       if (Date.now() >= deadline) break;
-      await sleep(Math.min(delay, deadline - Date.now()));
+      await sleep(Math.min(delay, deadline - Date.now()), signal);
       delay = Math.min(DEFAULTS.bridgePollMaxMs, Math.round(delay * DEFAULTS.bridgePollBackoff));
     }
     const hint = legacy

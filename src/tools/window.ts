@@ -27,13 +27,16 @@ import {
   typeText,
 } from "../win/win32.js";
 import {
+  ACTS_SAFELY,
   type ArgsOf,
+  DESTRUCTIVE,
   defineTool,
   plain,
+  READ_ONLY,
+  structured,
   type ToolContext,
   type ToolExtra,
   type ToolSpec,
-  text,
 } from "./_shared.js";
 
 const KEY_DOC =
@@ -106,6 +109,7 @@ export function registerWindowTools(server: McpServer, { config, hub }: ToolCont
           .optional()
           .describe("host:port to connect to (default: the configured rcon host:port)"),
       },
+      annotations: ACTS_SAFELY,
     },
     async (args) => {
       const target = args.connectTo ?? `${config.rconHost}:${config.rconPort}`;
@@ -124,6 +128,7 @@ export function registerWindowTools(server: McpServer, { config, hub }: ToolCont
         "game to close (nothing is typed into the window). force: true kills the FiveM " +
         "process tree instead — use it only when the game is wedged.",
       inputSchema: { force: z.boolean().optional() },
+      annotations: DESTRUCTIVE,
     },
     async (args) => {
       releaseAllHeld();
@@ -156,11 +161,22 @@ export function registerWindowTools(server: McpServer, { config, hub }: ToolCont
         "Whether the FiveM game window exists, its title/pid, on-screen rect, and whether " +
         "it is the foreground window. Input/screenshot tools focus it automatically.",
       inputSchema: {},
+      outputSchema: {
+        found: z.boolean(),
+        focused: z.boolean(),
+        title: z.string().optional(),
+        pid: z.number().int().optional(),
+        rect: z
+          .object({ left: z.number(), top: z.number(), right: z.number(), bottom: z.number() })
+          .nullable()
+          .optional(),
+      },
+      annotations: READ_ONLY,
     },
     async () => {
       const game = findGameWindow();
-      if (!game) return text({ found: false, focused: false });
-      return text({
+      if (!game) return structured({ found: false, focused: false });
+      return structured({
         found: true,
         title: game.title,
         pid: game.pid,
@@ -179,6 +195,7 @@ export function registerWindowTools(server: McpServer, { config, hub }: ToolCont
         "Restores/minimizes-out if needed and steals foreground (remembering the previous " +
         "window for restore_focus). Every input/screenshot tool calls this automatically.",
       inputSchema: {},
+      annotations: ACTS_SAFELY,
     },
     async () => {
       const game = ensureGameFocused();
@@ -194,6 +211,7 @@ export function registerWindowTools(server: McpServer, { config, hub }: ToolCont
       description:
         "Returns foreground to whatever window was focused before this tool focused the game.",
       inputSchema: {},
+      annotations: ACTS_SAFELY,
     },
     async () => {
       if (savedForeground === null) return plain("nothing saved — the game was already foreground");
@@ -234,6 +252,7 @@ export function registerWindowTools(server: McpServer, { config, hub }: ToolCont
             'Window-pixel rect, as an object or JSON string, e.g. {"x":300,"y":200,"width":400,"height":300}',
           ),
       },
+      annotations: ACTS_SAFELY,
     },
     async (args, game) => {
       const cropRect = parseCrop(args.crop);
@@ -267,6 +286,7 @@ export function registerWindowTools(server: McpServer, { config, hub }: ToolCont
         key: z.string(),
         holdMs: z.number().int().min(0).max(5000).optional().describe("Hold duration (default 20)"),
       },
+      annotations: ACTS_SAFELY,
     },
     async (args) => {
       pressKey(args.key, args.holdMs);
@@ -280,6 +300,7 @@ export function registerWindowTools(server: McpServer, { config, hub }: ToolCont
       title: "Hold a key down",
       description: `Key stays pressed until release_key. Use for movement (W) and camera. ${KEY_DOC} Held keys are released if this process exits.`,
       inputSchema: { key: z.string() },
+      annotations: ACTS_SAFELY,
     },
     async (args) => {
       holdKey(args.key);
@@ -294,6 +315,7 @@ export function registerWindowTools(server: McpServer, { config, hub }: ToolCont
       title: "Release held key(s)",
       description: "Release one held key, or all of them with key='all'.",
       inputSchema: { key: z.string() },
+      annotations: ACTS_SAFELY,
     },
     async (args) => {
       if (args.key.toLowerCase() === "all") {
@@ -314,6 +336,7 @@ export function registerWindowTools(server: McpServer, { config, hub }: ToolCont
         "normally. Open the target input first (e.g. client_command to focus, or a chat " +
         "key like T). Does not press Enter.",
       inputSchema: { text: z.string() },
+      annotations: ACTS_SAFELY,
     },
     async (args) => {
       typeText(args.text);
@@ -334,6 +357,7 @@ export function registerWindowTools(server: McpServer, { config, hub }: ToolCont
         x: z.number().int().optional(),
         y: z.number().int().optional(),
       },
+      annotations: ACTS_SAFELY,
     },
     async (args) => {
       mouseMove(args);
@@ -353,6 +377,7 @@ export function registerWindowTools(server: McpServer, { config, hub }: ToolCont
         button: z.enum(["left", "right"]).optional().describe("default left"),
         double: z.boolean().optional(),
       },
+      annotations: ACTS_SAFELY,
     },
     async (args) => {
       mouseClick(args.button ?? "left", args.double ?? false);
@@ -366,6 +391,7 @@ export function registerWindowTools(server: McpServer, { config, hub }: ToolCont
       title: "Mouse wheel",
       description: "Scroll the wheel (positive = up). NUI lists respond to it.",
       inputSchema: { amount: z.number().int().min(-50).max(50) },
+      annotations: ACTS_SAFELY,
     },
     async (args) => {
       mouseScroll(args.amount);

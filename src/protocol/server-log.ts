@@ -9,7 +9,7 @@ import { promises as fs } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import type { ConsoleLine } from "../console-buffer.js";
 import { DEFAULTS } from "../defaults.js";
-import { sleep } from "../util.js";
+import { abortError, sleep } from "../util.js";
 
 // VT100/ANSI CSI (incl. private-mode params like ESC[?202h seen in FXServer's
 // redirected stdout) and OSC strings.
@@ -86,9 +86,10 @@ export class ServerLogFile {
    */
   async waitFor(
     pattern: string,
-    options: { timeoutMs: number; pollMs?: number },
+    options: { timeoutMs: number; pollMs?: number; signal?: AbortSignal | undefined },
   ): Promise<ConsoleLine> {
     const regex = new RegExp(pattern);
+    const { signal } = options;
     const pollMs = options.pollMs ?? DEFAULTS.logPollMs;
     const deadline = Date.now() + options.timeoutMs;
     let cursor = (await fs.stat(this.path).catch(() => null))?.size ?? 0;
@@ -96,6 +97,7 @@ export class ServerLogFile {
     let decoder = new StringDecoder("utf8");
 
     for (;;) {
+      if (signal?.aborted) throw abortError(signal);
       let size = 0;
       try {
         size = (await fs.stat(this.path)).size;
@@ -135,7 +137,7 @@ export class ServerLogFile {
       if (Date.now() > deadline) {
         throw new Error(`no server log line matched /${pattern}/ within ${options.timeoutMs}ms`);
       }
-      await sleep(pollMs);
+      await sleep(pollMs, signal);
     }
   }
 }

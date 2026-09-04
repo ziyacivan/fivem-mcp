@@ -14,6 +14,7 @@
 import { EventEmitter } from "node:events";
 import net from "node:net";
 import { DEFAULTS } from "../defaults.js";
+import { debug, debugEnabled } from "../log.js";
 
 export const DEVCON_PROTOCOL = 211;
 /**
@@ -315,6 +316,7 @@ export class DevconConnection extends EventEmitter {
   }
 
   private handleFrame(frame: DevconFrame): void {
+    if (debugEnabled) debug("devcon", `<- ${frame.type} ${JSON.stringify(frame).slice(0, 200)}`);
     switch (frame.type) {
       case "ainf":
         this.probePending = false;
@@ -343,6 +345,7 @@ export class DevconConnection extends EventEmitter {
   /** Queue text into the process's console, exactly as if typed. */
   print(command: string): void {
     if (!this.socket.writable) throw new Error("devcon connection is not open");
+    debug("devcon", `-> CMND ${command}`);
     this.socket.write(encodeCommand(command));
   }
 

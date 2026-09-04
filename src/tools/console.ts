@@ -8,12 +8,15 @@ import { DEFAULTS } from "../defaults.js";
 import {
   compileUserRegex,
   consoleCommand,
+  consoleLineShape,
+  DESTRUCTIVE,
   defineTool,
   plain,
+  READ_ONLY,
   renderLines,
+  structured,
   type ToolContext,
   targetArg,
-  text,
 } from "./_shared.js";
 
 export function registerConsoleTools(server: McpServer, { config, hub }: ToolContext): void {
@@ -26,9 +29,26 @@ export function registerConsoleTools(server: McpServer, { config, hub }: ToolCon
         "Report RCON configuration for the server, the devcon connection to the FiveM client " +
         "console, and the server log-file tailer. Call this first.",
       inputSchema: {},
+      outputSchema: {
+        host: z.string(),
+        clientDevconPorts: z.array(z.number().int()),
+        client: z.object({
+          connected: z.boolean(),
+          process: z.string().nullable(),
+          channels: z.number().int(),
+          commands: z.number().int(),
+          bufferedLines: z.number().int(),
+          lastError: z.string().nullable(),
+        }),
+        server: z.object({
+          rcon: z.object({ configured: z.boolean(), address: z.string() }),
+          logFile: z.object({ path: z.string(), exists: z.boolean() }).nullable(),
+        }),
+      },
+      annotations: READ_ONLY,
     },
     async () =>
-      text({
+      structured({
         host: config.host,
         clientDevconPorts: config.clientDevconPorts,
         ...(await hub.status()),
@@ -45,8 +65,10 @@ export function registerConsoleTools(server: McpServer, { config, hub }: ToolCon
         "clients, protocol, game build. Works without rcon_password; use it to confirm " +
         "which server you are pointed at.",
       inputSchema: {},
+      outputSchema: z.object({}).catchall(z.string()),
+      annotations: READ_ONLY,
     },
-    async () => text(await hub.serverInfo()),
+    async () => structured(await hub.serverInfo()),
   );
 
   defineTool(
@@ -64,6 +86,7 @@ export function registerConsoleTools(server: McpServer, { config, hub }: ToolCon
           "Command text without a leading slash, e.g. 'restart breeze-chat'",
         ),
       },
+      annotations: DESTRUCTIVE,
     },
     async (args) => {
       const output = await hub.runServerCommand(args.command);
@@ -98,8 +121,9 @@ export function registerConsoleTools(server: McpServer, { config, hub }: ToolCon
           .optional()
           .describe("Set false to fire without waiting (long-loading maps, blocking commands)"),
       },
+      annotations: DESTRUCTIVE,
     },
-    async (args) => {
+    async (args, extra) => {
       if (args.waitForOutput === false) {
         const connection = await hub.ensureClient();
         connection.print(args.command);
@@ -107,6 +131,7 @@ export function registerConsoleTools(server: McpServer, { config, hub }: ToolCon
       }
       const lines = await hub.runClientCommand(args.command, {
         ...(args.timeoutMs === undefined ? {} : { timeoutMs: args.timeoutMs }),
+        signal: extra.signal,
       });
       return plain(renderLines(lines));
     },
@@ -144,6 +169,16 @@ export function registerConsoleTools(server: McpServer, { config, hub }: ToolCon
           .optional()
           .describe("client only: lines after this sequence number (response carries nextSeq)"),
       },
+      outputSchema: {
+        nextSeq: z.number().int().describe("Pass as afterSeq next time (client); -1 for server"),
+        matched: z.number().int(),
+        clientError: z
+          .string()
+          .optional()
+          .describe("Why the client console is not live (lines may be stale)"),
+        lines: z.array(z.object(consoleLineShape)),
+      },
+      annotations: READ_ONLY,
     },
     async (args) => {
       if (args.pattern !== undefined) compileUserRegex(args.pattern);
@@ -167,7 +202,7 @@ export function registerConsoleTools(server: McpServer, { config, hub }: ToolCon
         lines = hub.clientBuffer.tail({ ...options, afterSeq: args.afterSeq });
         nextSeq = hub.clientBuffer.latestSeq;
       }
-      return text({
+      return structured({
         nextSeq,
         matched: lines.length,
         ...(clientError ? { clientError } : {}),
@@ -207,21 +242,26 @@ export function registerConsoleTools(server: McpServer, { config, hub }: ToolCon
           .optional()
           .describe("client only: ignore lines up to this sequence number"),
       },
+      outputSchema: consoleLineShape,
+      annotations: READ_ONLY,
     },
-    async (args) => {
+    async (args, extra) => {
       compileUserRegex(args.pattern);
       const timeoutMs = args.timeoutMs ?? DEFAULTS.waitForConsoleTimeoutMs;
       let line: ConsoleLine;
       if (args.target === "server") {
-        line = await hub.requireServerLog().waitFor(args.pattern, { timeoutMs });
+        line = await hub
+          .requireServerLog()
+          .waitFor(args.pattern, { timeoutMs, signal: extra.signal });
       } else {
         await hub.ensureClient();
         line = await hub.clientBuffer.waitFor(args.pattern, {
           afterSeq: args.afterSeq,
           timeoutMs,
+          signal: extra.signal,
         });
       }
-      return text({ seq: line.seq, channel: line.channel, message: line.message });
+      return structured({ seq: line.seq, channel: line.channel, message: line.message });
     },
   );
 
@@ -237,6 +277,8 @@ export function registerConsoleTools(server: McpServer, { config, hub }: ToolCon
       inputSchema: {
         contains: z.string().optional(),
       },
+      outputSchema: { count: z.number().int(), commands: z.array(z.string()) },
+      annotations: READ_ONLY,
     },
     async (args) => {
       const connection = await hub.ensureClient();
@@ -244,7 +286,7 @@ export function registerConsoleTools(server: McpServer, { config, hub }: ToolCon
       const commands = [...connection.commands]
         .filter((command) => needle === undefined || command.toLowerCase().includes(needle))
         .sort();
-      return text({ count: commands.length, commands });
+      return structured({ count: commands.length, commands });
     },
   );
 }

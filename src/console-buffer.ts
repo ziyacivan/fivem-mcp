@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { DEFAULTS } from "./defaults.js";
 import type { DevconPrintLine } from "./protocol/devcon.js";
+import { abortError } from "./util.js";
 
 export interface ConsoleLine extends DevconPrintLine {
   seq: number;
@@ -66,13 +67,17 @@ export class ConsoleBuffer extends EventEmitter {
     return matched;
   }
 
-  /** Resolve with the first line after `afterSeq` matching `pattern`, else reject on timeout. */
+  /**
+   * Resolve with the first line after `afterSeq` matching `pattern`, else reject
+   * on timeout — or as soon as `signal` fires (the MCP request was cancelled).
+   */
   waitFor(
     pattern: string,
-    options: { afterSeq?: number | undefined; timeoutMs: number },
+    options: { afterSeq?: number | undefined; timeoutMs: number; signal?: AbortSignal | undefined },
   ): Promise<ConsoleLine> {
     const regex = new RegExp(pattern);
-    const { afterSeq = 0, timeoutMs } = options;
+    const { afterSeq = 0, timeoutMs, signal } = options;
+    if (signal?.aborted) return Promise.reject(abortError(signal));
 
     const found = this.linesInternal.find(
       (line) => line.seq > afterSeq && regex.test(`${line.channel}: ${line.message}`),
@@ -86,6 +91,10 @@ export class ConsoleBuffer extends EventEmitter {
           resolve(line);
         }
       };
+      const onAbort = () => {
+        settle();
+        reject(abortError(signal));
+      };
       const timer = setTimeout(() => {
         settle();
         reject(new Error(`no console line matched /${pattern}/ within ${timeoutMs}ms`));
@@ -93,17 +102,24 @@ export class ConsoleBuffer extends EventEmitter {
       const settle = () => {
         clearTimeout(timer);
         this.off("line", onLine);
+        signal?.removeEventListener("abort", onAbort);
       };
       this.on("line", onLine);
+      signal?.addEventListener("abort", onAbort, { once: true });
     });
   }
 
   /**
    * Resolve once at least one line after `afterSeq` has arrived and the stream
    * then stays quiet for `quietMs`; resolve with whatever arrived even if the
-   * overall `timeoutMs` elapsed with no output at all.
+   * overall `timeoutMs` elapsed with no output at all (or `signal` fired).
    */
-  waitForQuiet(afterSeq: number, quietMs: number, timeoutMs: number): Promise<ConsoleLine[]> {
+  waitForQuiet(
+    afterSeq: number,
+    quietMs: number,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<ConsoleLine[]> {
     return new Promise((resolve) => {
       const deadline = Date.now() + timeoutMs;
       let quietTimer: NodeJS.Timeout | undefined;
@@ -111,6 +127,7 @@ export class ConsoleBuffer extends EventEmitter {
       const finish = () => {
         if (quietTimer) clearTimeout(quietTimer);
         this.off("line", onLine);
+        signal?.removeEventListener("abort", finish);
         resolve(this.linesInternal.filter((line) => line.seq > afterSeq));
       };
 
@@ -129,6 +146,7 @@ export class ConsoleBuffer extends EventEmitter {
       };
 
       this.on("line", onLine);
+      signal?.addEventListener("abort", finish, { once: true });
       // No output yet: give the process until the deadline, then return empty.
       quietTimer = setTimeout(finish, timeoutMs);
     });
