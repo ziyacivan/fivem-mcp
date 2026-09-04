@@ -110,3 +110,50 @@ describe("bridge client half (faked natives)", () => {
     expect(result.error).toMatch(/unknown client op/);
   });
 });
+
+describe("bridge client half — hardening", () => {
+  it("call_native only reaches PascalCase own globals (no prototype walking)", async () => {
+    for (const name of ["__proto__", "constructor", "eval", "doFakeThing", "Object.keys"]) {
+      const result = await call({ op: "call_native", name });
+      expect(result.ok, name).toBe(false);
+    }
+    vi.stubGlobal("GetConvar", (key: string, def: string) =>
+      key === "mcpb_native_allowlist" ? "SomethingElse" : def,
+    );
+    const blocked = await call({ op: "call_native", name: "DoFakeThing" });
+    expect(blocked.error).toMatch(/allowlist/);
+    vi.stubGlobal("GetConvar", (_key: string, def: string) => def);
+    expect((await call({ op: "call_native", name: "DoFakeThing" })).ok).toBe(true);
+  });
+
+  it("teleport rejects non-finite coordinates before touching the native", async () => {
+    fns.SetEntityCoords.mockClear();
+    const result = await call({ op: "teleport", x: "nope", y: 1, z: 1 });
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/finite/);
+    expect(fns.SetEntityCoords).not.toHaveBeenCalled();
+  });
+
+  it("BigInt nested in a native result serialises instead of losing the answer", async () => {
+    vi.stubGlobal("BigNative", () => ({ deep: { hash: 123n } }));
+    const result = await call({ op: "call_native", name: "BigNative" });
+    expect(result).toEqual({ ok: true, data: { deep: { hash: "123" } } });
+  });
+
+  it("nui_callback times out instead of never answering", async () => {
+    vi.stubGlobal("GetConvar", (key: string, def: string) =>
+      key === "mcpb_nui_timeout_ms" ? "30" : def,
+    );
+    vi.stubGlobal(
+      "fetch",
+      (_url: string, init: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          init.signal.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+    );
+    const result = await call({ op: "nui_callback", resource: "r", endpoint: "hang" });
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/did not answer within 30ms/);
+    vi.stubGlobal("GetConvar", (_key: string, def: string) => def);
+  });
+});

@@ -91,7 +91,7 @@ describe("bridge server half (faked FiveM runtime)", () => {
   });
 
   it("players", () => {
-    const line = run("t2", "server", "-", { op: "players" });
+    const line = run("t2", "server", "-", { op: "players", identifiers: true });
     const result = JSON.parse((line as string).slice("MCP_RESULT t2 ".length));
     expect(result.data).toEqual([
       { src: 1, name: "Player 1", ping: 12, identifiers: ["license:abc"] },
@@ -101,7 +101,7 @@ describe("bridge server half (faked FiveM runtime)", () => {
 
   it("players tolerates a runtime without GetPlayerIdentifiers (live FXServer JS)", () => {
     vi.stubGlobal("GetPlayerIdentifiers", undefined);
-    const line = run("t2b", "server", "-", { op: "players" });
+    const line = run("t2b", "server", "-", { op: "players", identifiers: true });
     const result = JSON.parse((line as string).slice("MCP_RESULT t2b ".length));
     expect(result.ok).toBe(true);
     expect(result.data[0]).toEqual({ src: 1, name: "Player 1", ping: 12, identifiers: null });
@@ -213,5 +213,124 @@ describe("bridge server half (faked FiveM runtime)", () => {
     const line = run("d1", "server", "-", { op: "ping" });
     expect(line).toContain("MCPB_ERR d1 bridge disabled");
     state.convars.set("mcpb_enabled", "true");
+  });
+});
+
+describe("bridge server half — hardening", () => {
+  const resultOf = (line: string | null, id: string) =>
+    JSON.parse((line as string).slice(`MCP_RESULT ${id} `.length));
+
+  it("players omits identifiers unless asked (datagram budget)", () => {
+    const result = resultOf(run("h0", "server", "-", { op: "players" }), "h0");
+    expect(result.data[0]).toEqual({ src: 1, name: "Player 1", ping: 12 });
+  });
+
+  it("call_export validates argument types and honours mcpb_export_allowlist", () => {
+    const bad = resultOf(run("h1", "server", "-", { op: "call_export", resource: 5 }), "h1");
+    expect(bad).toMatchObject({ ok: false, error: expect.stringContaining("string") });
+    state.convars.set("mcpb_export_allowlist", "other:*, myresource:boom");
+    const blocked = resultOf(
+      run("h2", "server", "-", {
+        op: "call_export",
+        resource: "myresource",
+        method: "add",
+        args: [1, 1],
+      }),
+      "h2",
+    );
+    expect(blocked).toMatchObject({ ok: false, error: expect.stringContaining("allowlist") });
+    state.convars.set("mcpb_export_allowlist", "myresource:*");
+    const allowed = resultOf(
+      run("h3", "server", "-", {
+        op: "call_export",
+        resource: "myresource",
+        method: "add",
+        args: [1, 1],
+      }),
+      "h3",
+    );
+    expect(allowed).toEqual({ ok: true, data: 2 });
+    state.convars.set("mcpb_export_allowlist", "");
+  });
+
+  it("trigger_event rejects a non-numeric player id", () => {
+    state.convars.set("mcpb_event_allowlist", "ev");
+    const bad = resultOf(
+      run("h4", "server", "-", { op: "trigger_event", event: "ev", toClient: true, player: "abc" }),
+      "h4",
+    );
+    expect(bad).toMatchObject({ ok: false, error: expect.stringContaining("player") });
+    state.convars.set("mcpb_event_allowlist", "");
+  });
+
+  it("malformed command lines (wrong token count, non-object payload) answer with errors", () => {
+    const handler = state.commands.get("mcpb");
+    if (!handler) throw new Error("no command");
+    state.printed.length = 0;
+    handler(0, ["h5", "server", "-", encodeRequest({ op: "ping" }), "extra"]);
+    expect(state.printed.join("\n")).toMatch(/MCP_RESULT h5 .*bad request payload/);
+    state.printed.length = 0;
+    handler(0, ["h6", "server", "-", Buffer.from("[1,2]").toString("base64")]);
+    expect(state.printed.join("\n")).toMatch(/MCP_RESULT h6 .*must be a JSON object/);
+  });
+
+  it("oversized results are truncated to fit one datagram, with a marker", () => {
+    vi.stubGlobal("exports", {
+      big: { blob: () => "x".repeat(5000) },
+    });
+    const result = resultOf(
+      run("h7", "server", "-", { op: "call_export", resource: "big", method: "blob" }),
+      "h7",
+    );
+    expect(result.ok).toBe(true);
+    expect(result.data).toMatchObject({ truncated: true, bytes: expect.any(Number) });
+    expect(JSON.stringify(result).length).toBeLessThan(1400);
+  });
+
+  it("BigInt anywhere in a result serialises instead of throwing", () => {
+    vi.stubGlobal("exports", { h: { hash: () => ({ nested: { value: 12345678901234567890n } }) } });
+    const result = resultOf(
+      run("h8", "server", "-", { op: "call_export", resource: "h", method: "hash" }),
+      "h8",
+    );
+    expect(result).toEqual({ ok: true, data: { nested: { value: "12345678901234567890" } } });
+  });
+
+  it("a client op nobody answers fails fast after mcpb_client_timeout_ms", async () => {
+    state.convars.set("mcpb_client_timeout_ms", "40");
+    run("d0", "server", "-", { op: "poll" }); // drain
+    const ack = run("h9", "client", "3", { op: "position" });
+    expect(ack).toContain("MCPB_ACK h9");
+    await new Promise((r) => setTimeout(r, 90));
+    const polled = resultOf(run("h10", "server", "-", { op: "poll" }), "h10");
+    expect(polled.data).toEqual([
+      { id: "h9", result: { ok: false, error: expect.stringContaining("did not answer") } },
+    ]);
+    // the late answer is ignored: the id is no longer pending
+    state.printed.length = 0;
+    state.events.get("mcpb:res")?.("h9", JSON.stringify({ ok: true }));
+    expect(state.printed.join("\n")).not.toContain("MCP_RESULT h9");
+    state.convars.delete("mcpb_client_timeout_ms");
+  });
+
+  it("poll honours max and never returns more than one datagram of entries", () => {
+    run("d1", "server", "-", { op: "poll" }); // drain
+    for (let i = 0; i < 5; i++) {
+      run(`m${i}`, "client", "3", { op: "ping" });
+      state.events.get("mcpb:res")?.(`m${i}`, JSON.stringify({ ok: true, data: { i } }));
+    }
+    const first = resultOf(run("h11", "server", "-", { op: "poll", max: 2 }), "h11");
+    expect(first.data.map((e: { id: string }) => e.id)).toEqual(["m0", "m1"]);
+    const rest = resultOf(run("h12", "server", "-", { op: "poll" }), "h12");
+    expect(rest.data.map((e: { id: string }) => e.id)).toEqual(["m2", "m3", "m4"]);
+  });
+
+  it("token comparison is exact (no prefix match)", () => {
+    state.convars.set("mcpb_token", "s3cret");
+    const prefix = resultOf(run("h13", "server", "-", { op: "ping", token: "s3c" }), "h13");
+    expect(prefix).toMatchObject({ ok: false, error: "bad mcpb token" });
+    const longer = resultOf(run("h14", "server", "-", { op: "ping", token: "s3cretXX" }), "h14");
+    expect(longer).toMatchObject({ ok: false, error: "bad mcpb token" });
+    state.convars.set("mcpb_token", "");
   });
 });
