@@ -103,3 +103,30 @@ describe("ConsoleBuffer cancellation", () => {
     expect(buffer.listenerCount("line")).toBe(0);
   });
 });
+
+describe("ConsoleBuffer ring semantics", () => {
+  it("wraps without shifting: order, size and afterSeq stay right past capacity", () => {
+    const buffer = new ConsoleBuffer(4);
+    for (let i = 1; i <= 10; i++) buffer.push({ channel: "c", message: `m${i}` });
+    expect(buffer.size).toBe(4);
+    expect(buffer.latestSeq).toBe(10);
+    expect(buffer.tail().map((l) => l.message)).toEqual(["m7", "m8", "m9", "m10"]);
+    expect(buffer.tail({ afterSeq: 8 }).map((l) => l.seq)).toEqual([9, 10]);
+    expect(buffer.tail({ afterSeq: 2 }).map((l) => l.seq)).toEqual([7, 8, 9, 10]); // evicted lines are gone
+    expect(buffer.tail({ afterSeq: 10 })).toEqual([]);
+    expect(buffer.tail({ limit: 2, contains: "m" }).map((l) => l.message)).toEqual(["m9", "m10"]);
+  });
+
+  it("waitFor searches only lines newer than afterSeq in history", async () => {
+    const buffer = new ConsoleBuffer(3);
+    for (let i = 1; i <= 5; i++) buffer.push({ channel: "c", message: `hit ${i}` });
+    await expect(buffer.waitFor("hit", { afterSeq: 4, timeoutMs: 50 })).resolves.toMatchObject({
+      seq: 5,
+    });
+    await expect(buffer.waitFor("hit", { afterSeq: 5, timeoutMs: 30 })).rejects.toThrow(/matched/);
+  });
+
+  it("rejects a non-positive capacity", () => {
+    expect(() => new ConsoleBuffer(0)).toThrow(/capacity/);
+  });
+});

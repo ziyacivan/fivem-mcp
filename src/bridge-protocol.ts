@@ -8,7 +8,7 @@ import type { Target } from "./types.js";
 export interface BridgeResult {
   ok: boolean;
   data?: unknown;
-  error?: string;
+  error?: string | undefined;
 }
 
 export function newCallId(): string {

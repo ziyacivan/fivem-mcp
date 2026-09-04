@@ -7,6 +7,8 @@ import { encodeRconRequest } from "../../src/protocol/rcon.js";
  */
 export class FakeRconServer {
   readonly receivedRequests: Buffer[] = [];
+  /** Distinct client ports seen — one per socket the client opened. */
+  readonly sourcePorts = new Set<number>();
   mode: "ok" | "silent" | "bad-password" | "no-rcon" = "ok";
   port = 0;
 
@@ -21,6 +23,7 @@ export class FakeRconServer {
     return new Promise((resolve) => {
       this.socket.on("message", (msg, rinfo) => {
         this.receivedRequests.push(Buffer.from(msg));
+        this.sourcePorts.add(rinfo.port);
         if (this.mode === "silent") return;
 
         const prefix = Buffer.from([0xff, 0xff, 0xff, 0xff]);

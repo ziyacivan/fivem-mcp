@@ -95,3 +95,19 @@ describe("RconClient", () => {
     await expect(client.exec("status")).rejects.toThrow(RconError);
   });
 });
+
+describe("RconClient socket reuse", () => {
+  it("runs many commands over one UDP socket and releases it on close()", async () => {
+    const server = new FakeRconServer("pw");
+    const port = await server.listen();
+    cleanups.push(() => server.close());
+    const client = new RconClient({ host: "127.0.0.1", port, password: "pw" });
+    for (let i = 0; i < 30; i++) {
+      expect(await client.exec(`cmd ${i}`)).toBe(`ran: cmd ${i}`);
+    }
+    expect(server.receivedRequests).toHaveLength(30);
+    expect(server.sourcePorts.size).toBe(1); // one client socket, however many commands
+    client.close();
+    await expect(client.exec("after")).rejects.toThrow(/closed/);
+  });
+});

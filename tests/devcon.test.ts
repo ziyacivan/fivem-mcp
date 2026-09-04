@@ -185,3 +185,27 @@ async function vi_poll(predicate: () => boolean, timeoutMs = 4000): Promise<void
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }
+
+describe("frame decoder chunk queue", () => {
+  it("assembles a large frame from many chunks and keeps the bytes after it", () => {
+    const big = prntFrame("chan", "x".repeat(200_000));
+    const next = prntFrame("chan", "tail");
+    const wire = Buffer.concat([big, next]);
+    const seen: string[] = [];
+    const decoder = new DevconFrameDecoder((frame) => {
+      if (frame.type === "prnt") seen.push(frame.message.length === 4 ? frame.message : "big");
+    });
+    for (let off = 0; off < wire.length; off += 4096) decoder.push(wire.subarray(off, off + 4096));
+    expect(seen).toEqual(["big", "tail"]);
+  });
+
+  it("copes with a header split across chunks", () => {
+    const frame = prntFrame("c", "hello");
+    const seen: string[] = [];
+    const decoder = new DevconFrameDecoder((f) => f.type === "prnt" && seen.push(f.message));
+    decoder.push(frame.subarray(0, 3));
+    decoder.push(frame.subarray(3, 7));
+    decoder.push(frame.subarray(7));
+    expect(seen).toEqual(["hello"]);
+  });
+});

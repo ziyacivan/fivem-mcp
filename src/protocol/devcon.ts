@@ -140,28 +140,48 @@ export function decodeFrame(buf: Buffer): DevconFrame {
 
 const KNOWN_MAGICS = new Set(["AINF", "CHAN", "CVAR", "PRNT"]);
 
-/** Incremental stream decoder: feed TCP chunks, get complete frames back. */
+/**
+ * Incremental stream decoder: feed TCP chunks, get complete frames back.
+ * Chunks are queued, not concatenated on arrival: a 1 MB frame arriving in
+ * 64 KB segments used to cost a growing copy per segment (O(n²)); now the
+ * queue is joined at most once per frame, when the frame is complete.
+ */
 export class DevconFrameDecoder {
-  private pending: Buffer = Buffer.alloc(0);
+  private chunks: Buffer[] = [];
+  private total = 0;
 
   constructor(private readonly onFrame: (frame: DevconFrame) => void) {}
 
+  /** Join the queue into one buffer (only when a header or frame straddles chunks). */
+  private compact(): Buffer {
+    if (this.chunks.length > 1) this.chunks = [Buffer.concat(this.chunks, this.total)];
+    return this.chunks[0] ?? Buffer.alloc(0);
+  }
+
   push(chunk: Buffer): void {
-    this.pending = this.pending.length === 0 ? chunk : Buffer.concat([this.pending, chunk]);
+    if (chunk.length === 0) return;
+    this.chunks.push(chunk);
+    this.total += chunk.length;
 
     for (;;) {
-      if (this.pending.length < FRAME_HEADER_SIZE) return;
-      const magic = this.pending.toString("ascii", 0, 4);
+      if (this.total < FRAME_HEADER_SIZE) return;
+      let head = this.chunks[0] as Buffer;
+      if (head.length < FRAME_HEADER_SIZE) head = this.compact();
+      const magic = head.toString("ascii", 0, 4);
       if (!KNOWN_MAGICS.has(magic)) {
         throw new DevconProtocolError(`unknown devcon frame magic: ${JSON.stringify(magic)}`);
       }
-      const length = this.pending.readUInt32BE(6);
+      const length = head.readUInt32BE(6);
       if (length < FRAME_HEADER_SIZE || length > MAX_FRAME_SIZE) {
         throw new DevconProtocolError(`bad devcon frame length: ${length}`);
       }
-      if (this.pending.length < length) return;
-      const frame = this.pending.subarray(0, length);
-      this.pending = this.pending.subarray(length);
+      if (this.total < length) return;
+      if (head.length < length) head = this.compact();
+      const frame = head.subarray(0, length);
+      const rest = head.subarray(length);
+      this.total -= length;
+      if (rest.length === 0) this.chunks.shift();
+      else this.chunks[0] = rest;
       this.onFrame(decodeFrame(frame));
     }
   }
@@ -296,23 +316,36 @@ export class DevconConnection extends EventEmitter {
     });
   }
 
-  /** Try each port in order; resolves with the first connection that handshakes. */
+  /**
+   * Dial every port at once; resolves with the first connection that handshakes
+   * and destroys the others. Sequential dialing made a dead first port cost its
+   * full connect timeout before the live one was even tried.
+   */
   static async connectFirstUsable(
     host: string,
     ports: number[],
     connectTimeoutMs?: number,
   ): Promise<DevconConnection> {
-    let lastError: unknown;
-    for (const port of ports) {
-      try {
-        return await DevconConnection.connect({ host, port, connectTimeoutMs });
-      } catch (error) {
-        lastError = error;
-      }
+    const attempts = ports.map((port) =>
+      DevconConnection.connect({ host, port, connectTimeoutMs }),
+    );
+    let winner: DevconConnection;
+    try {
+      winner = await Promise.any(attempts);
+    } catch (error) {
+      const errors = error instanceof AggregateError ? error.errors : [error];
+      const detail = errors.map((e) => (e instanceof Error ? e.message : String(e))).join("; ");
+      throw new Error(`no devcon listener found on ${host} (${ports.join(", ")}): ${detail}`);
     }
-    throw lastError instanceof Error
-      ? lastError
-      : new Error(`no devcon listener found on ${host}: (${ports.join(", ")})`);
+    for (const attempt of attempts) {
+      attempt.then(
+        (connection) => {
+          if (connection !== winner) connection.destroy();
+        },
+        () => undefined,
+      );
+    }
+    return winner;
   }
 
   private handleFrame(frame: DevconFrame): void {

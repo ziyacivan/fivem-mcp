@@ -40,13 +40,25 @@ export interface RconOptions {
 
 export class RconError extends Error {}
 
+interface Pending {
+  command: string;
+  resolve: (text: string) => void;
+  reject: (error: Error) => void;
+  timer: NodeJS.Timeout;
+}
+
 /**
  * Minimal rcon client. One command is in flight at a time (the protocol carries
  * no request id, so concurrent commands could not be correlated); callers are
- * serialized internally.
+ * serialized internally. One UDP socket lives for the client's lifetime — the
+ * bridge poll loop issues several commands a second, and opening/closing a
+ * socket per command was pure churn. `close()` releases it.
  */
 export class RconClient {
   private queue: Promise<unknown> = Promise.resolve();
+  private socket: dgram.Socket | null = null;
+  private pending: Pending | null = null;
+  private closed = false;
 
   constructor(private readonly options: RconOptions) {}
 
@@ -58,6 +70,7 @@ export class RconClient {
     if (!this.isConfigured) {
       return Promise.reject(new RconError("no rcon password configured (FIVEM_RCON_PASSWORD)"));
     }
+    if (this.closed) return Promise.reject(new RconError("rcon client is closed"));
     const run = () => this.execOne(command);
     const result = this.queue.then(run, run);
     this.queue = result.then(
@@ -67,71 +80,85 @@ export class RconClient {
     return result;
   }
 
+  /** Release the UDP socket; any in-flight command fails. */
+  close(): void {
+    this.closed = true;
+    this.settle((pending) => pending.reject(new RconError("rcon client closed")));
+    this.dropSocket();
+  }
+
+  private ensureSocket(): dgram.Socket {
+    if (this.socket) return this.socket;
+    const socket = dgram.createSocket("udp4");
+    socket.on("message", (msg, rinfo) => {
+      // Only the server we asked may answer: a datagram from anywhere else
+      // would let a third party inject fabricated console output.
+      if (rinfo.port !== this.options.port || !sameHost(rinfo.address, this.options.host)) return;
+      this.settle((pending) => {
+        let response: RconResponse;
+        try {
+          response = parseRconResponse(msg);
+        } catch (error) {
+          pending.reject(error instanceof Error ? error : new Error(String(error)));
+          return;
+        }
+        debug("rcon", `<- ${response.kind} ${response.text.length}B`);
+        if (response.kind === "error") pending.reject(new RconError(response.text.trim()));
+        else pending.resolve(response.text);
+      });
+    });
+    socket.on("error", (error) => {
+      // Socket-level failure: fail the current command and start fresh next time.
+      this.settle((pending) => pending.reject(new RconError(String(error))));
+      this.dropSocket();
+    });
+    socket.unref();
+    this.socket = socket;
+    return socket;
+  }
+
+  private dropSocket(): void {
+    const socket = this.socket;
+    this.socket = null;
+    if (!socket) return;
+    socket.removeAllListeners("message");
+    socket.on("error", () => undefined); // a late error must not throw out of close()
+    try {
+      socket.close();
+    } catch {
+      /* already closed */
+    }
+  }
+
+  /** Complete the in-flight command exactly once. */
+  private settle(complete: (pending: Pending) => void): void {
+    const pending = this.pending;
+    if (!pending) return;
+    this.pending = null;
+    clearTimeout(pending.timer);
+    complete(pending);
+  }
+
   private execOne(command: string): Promise<string> {
     const { host, port, password, timeoutMs = DEFAULTS.rconTimeoutMs } = this.options;
     const request = encodeRconRequest(password, command);
     debug("rcon", `-> ${command}`);
 
     return new Promise((resolve, reject) => {
-      const socket = dgram.createSocket("udp4");
-      let settled = false;
-
-      const finish = () => {
-        settled = true;
-        clearTimeout(timer);
-        socket.removeAllListeners("message");
-        socket.on("error", () => undefined); // a late error must not throw out of close()
-        try {
-          socket.close();
-        } catch {
-          /* already closed */
-        }
-      };
-
+      const socket = this.ensureSocket();
       const timer = setTimeout(() => {
-        if (settled) return;
-        finish();
-        reject(
-          new RconError(
-            `rcon command "${command}" timed out after ${timeoutMs}ms — ` +
-              `is \`rcon_password\` set on the server and is ${host}:${port} its game port?`,
+        this.settle((pending) =>
+          pending.reject(
+            new RconError(
+              `rcon command "${pending.command}" timed out after ${timeoutMs}ms — ` +
+                `is \`rcon_password\` set on the server and is ${host}:${port} its game port?`,
+            ),
           ),
         );
       }, timeoutMs);
-
-      socket.on("message", (msg, rinfo) => {
-        if (settled) return;
-        // Only the server we asked may answer: a datagram from anywhere else
-        // would let a third party inject fabricated console output.
-        if (rinfo.port !== port || !sameHost(rinfo.address, host)) return;
-        let response: RconResponse;
-        try {
-          response = parseRconResponse(msg);
-        } catch (error) {
-          finish();
-          reject(error);
-          return;
-        }
-        finish();
-        debug("rcon", `<- ${response.kind} ${response.text.length}B`);
-        if (response.kind === "error") {
-          reject(new RconError(response.text.trim()));
-        } else {
-          resolve(response.text);
-        }
-      });
-
-      socket.on("error", (error) => {
-        if (settled) return;
-        finish();
-        reject(new RconError(String(error)));
-      });
-
+      this.pending = { command, resolve, reject, timer };
       socket.send(request, port, host, (error) => {
-        if (error && !settled) {
-          finish();
-          reject(new RconError(String(error)));
-        }
+        if (error) this.settle((pending) => pending.reject(new RconError(String(error))));
       });
     });
   }

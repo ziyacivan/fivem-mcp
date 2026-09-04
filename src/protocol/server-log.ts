@@ -52,9 +52,9 @@ export class ServerLogFile {
       handle = await fs.open(this.path, "r");
       const { size } = await handle.stat();
       const start = Math.max(0, size - DEFAULTS.logTailBytes);
-      const buffer = Buffer.alloc(size - start);
-      await handle.read(buffer, 0, buffer.length, start);
-      text = buffer.toString("utf8");
+      const buffer = Buffer.allocUnsafe(size - start);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
+      text = buffer.toString("utf8", 0, bytesRead);
       if (start > 0) text = text.slice(text.indexOf("\n") + 1);
     } finally {
       await handle?.close();
@@ -62,19 +62,20 @@ export class ServerLogFile {
 
     const needle = contains?.toLowerCase();
     const regex = pattern ? new RegExp(pattern) : undefined;
-    let lines = text
-      .split(/\r?\n/)
-      .filter((line) => line.length > 0)
-      .map((line) => ({ ...parseServerLogLine(line), seq: 0, at: 0 }));
-
-    if (channel !== undefined) lines = lines.filter((line) => line.channel === channel);
-    if (needle !== undefined) {
-      lines = lines.filter((line) => line.message.toLowerCase().includes(needle));
+    // Newest lines first: parse and filter only until `limit` matches are in hand,
+    // instead of materialising every one of the ~10k lines in the window.
+    const raw = text.split(/\r?\n/);
+    const out: ConsoleLine[] = [];
+    for (let i = raw.length - 1; i >= 0 && out.length < limit; i--) {
+      const rawLine = raw[i] as string;
+      if (rawLine.length === 0) continue;
+      const line = { ...parseServerLogLine(rawLine), seq: 0, at: 0 };
+      if (channel !== undefined && line.channel !== channel) continue;
+      if (needle !== undefined && !line.message.toLowerCase().includes(needle)) continue;
+      if (regex !== undefined && !regex.test(`${line.channel}: ${line.message}`)) continue;
+      out.push(line);
     }
-    if (regex !== undefined) {
-      lines = lines.filter((line) => regex.test(`${line.channel}: ${line.message}`));
-    }
-    return lines.slice(-limit);
+    return out.reverse();
   }
 
   /**

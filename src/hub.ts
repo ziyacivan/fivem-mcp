@@ -1,3 +1,4 @@
+import { z } from "zod";
 import {
   type BridgeResult,
   buildCommandLine,
@@ -35,6 +36,18 @@ export interface HubStatus {
   };
 }
 
+/** What a v0.5 bridge's `poll` op hands back. */
+const pollEntries = z.array(
+  z.object({
+    id: z.string(),
+    result: z.object({
+      ok: z.boolean(),
+      data: z.unknown().optional(),
+      error: z.string().optional(),
+    }),
+  }),
+);
+
 const SERVER_LOG_HINT =
   "server console needs FIVEM_SERVER_LOG pointed at FXServer's redirected stdout (no server devcon on modern builds)";
 
@@ -52,7 +65,9 @@ export class Hub {
   readonly rcon: RconClient;
   readonly serverLog: ServerLogFile | null;
   /** Poll results belonging to another caller's id wait here (sessions can overlap). */
-  private readonly bridgeInbox = new Map<string, BridgeResult>();
+  private readonly bridgeInbox = new Map<string, { result: BridgeResult; at: number }>();
+  /** null until the first client op tells us whether the bridge speaks `poll`. */
+  private bridgeSupportsPoll: boolean | null = null;
 
   constructor(readonly config: Config) {
     this.clientBuffer = new ConsoleBuffer(config.logCapacity);
@@ -188,9 +203,10 @@ export class Hub {
     }
     const id = newCallId();
     // Arm the legacy tailer BEFORE dispatching — an answer landing between the
-    // dispatch and the poll-unknown verdict must not be missed.
+    // dispatch and the poll-unknown verdict must not be missed. Once a bridge has
+    // answered a poll, the tailer is never armed again (no idle file polling).
     const legacyWait =
-      target === "client" && this.serverLog
+      target === "client" && this.serverLog && this.bridgeSupportsPoll !== true
         ? this.serverLog
             .waitFor(`MCP_RESULT ${id}`, {
               timeoutMs: timeoutMs + DEFAULTS.bridgeLegacySlackMs,
@@ -225,10 +241,12 @@ export class Hub {
       const buffered = this.bridgeInbox.get(id);
       if (buffered) {
         this.bridgeInbox.delete(id);
-        return buffered;
+        return buffered.result;
       }
-      const poll = await this.pollBridge();
+      const poll =
+        this.bridgeSupportsPoll === false ? { entries: [], legacy: true } : await this.pollBridge();
       if (poll.legacy) {
+        this.bridgeSupportsPoll = false;
         if (!legacyWait) {
           throw new Error(
             "this mcpb resource predates the in-band 'poll' op — update the files and `restart mcpb`, or set FIVEM_SERVER_LOG for the log-tail fallback",
@@ -240,11 +258,14 @@ export class Hub {
         if (result) return result;
         break;
       }
+      this.bridgeSupportsPoll = true;
       let mine: BridgeResult | null = null;
+      const now = Date.now();
       for (const entry of poll.entries) {
         if (entry.id === id) mine = entry.result;
-        else this.bridgeInbox.set(entry.id, entry.result);
+        else this.bridgeInbox.set(entry.id, { result: entry.result, at: now });
       }
+      this.pruneInbox(now);
       if (mine) return mine;
       if (Date.now() >= deadline) break;
       await sleep(Math.min(delay, deadline - Date.now()), signal);
@@ -256,6 +277,23 @@ export class Hub {
     throw new Error(
       `bridge client op '${op}' (src ${src}) did not answer within ${timeoutMs}ms: ${hint}`,
     );
+  }
+
+  /** Drop foreign results nobody collected: older than the TTL, or beyond the cap (oldest first). */
+  private pruneInbox(now: number): void {
+    for (const [key, entry] of this.bridgeInbox) {
+      if (now - entry.at > DEFAULTS.bridgeInboxTtlMs) this.bridgeInbox.delete(key);
+    }
+    while (this.bridgeInbox.size > DEFAULTS.bridgeInboxMax) {
+      const oldest = this.bridgeInbox.keys().next();
+      if (oldest.done) break;
+      this.bridgeInbox.delete(oldest.value);
+    }
+  }
+
+  /** Foreign results currently parked (for tests and status). */
+  get bridgeInboxSize(): number {
+    return this.bridgeInbox.size;
   }
 
   private withToken(req: Record<string, unknown>): Record<string, unknown> {
@@ -286,8 +324,12 @@ export class Hub {
     if (!result.ok && /unknown server op/.test(String(result.error))) {
       return { entries: [], legacy: true };
     }
-    if (result.ok && Array.isArray(result.data)) {
-      return { entries: result.data as Array<{ id: string; result: BridgeResult }>, legacy: false };
+    if (result.ok) {
+      const parsed = pollEntries.safeParse(result.data);
+      if (parsed.success) return { entries: parsed.data, legacy: false };
+      throw new Error(
+        `bridge poll returned an unexpected payload: ${JSON.stringify(result.data).slice(0, 160)}`,
+      );
     }
     return { entries: [], legacy: false };
   }
@@ -319,5 +361,6 @@ export class Hub {
   closeAll(): void {
     this.clientConnection?.destroy();
     this.clientConnection = null;
+    this.rcon.close();
   }
 }

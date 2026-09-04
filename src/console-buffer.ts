@@ -19,25 +19,49 @@ export interface TailOptions {
   pattern?: string | undefined;
 }
 
+type LineFilter = (line: ConsoleLine) => boolean;
+
+function buildFilter(options: TailOptions): LineFilter {
+  const { channel, contains, pattern } = options;
+  const needle = contains?.toLowerCase();
+  const regex = pattern ? new RegExp(pattern) : undefined;
+  return (line) =>
+    (channel === undefined || line.channel === channel) &&
+    (needle === undefined || line.message.toLowerCase().includes(needle)) &&
+    (regex === undefined || regex.test(`${line.channel}: ${line.message}`));
+}
+
 /**
  * Ring buffer of console lines with a monotonic seq, so callers can ask for
  * "everything after what I saw last" without missing or duplicating lines.
- * Emits "line" on every push.
+ * Emits "line" on every push. push() is O(1) (fixed slots, no shifting) and
+ * tail() walks backwards from the newest line, stopping at `limit` matches or
+ * at `afterSeq` — the common "last 100 of 5000" read touches ~100 entries.
  */
 export class ConsoleBuffer extends EventEmitter {
-  private readonly linesInternal: ConsoleLine[] = [];
+  private readonly slots: Array<ConsoleLine | undefined>;
+  /** Index of the oldest line. */
+  private head = 0;
+  private count = 0;
   private nextSeq = 1;
 
   constructor(private readonly capacity: number) {
     super();
+    if (!Number.isInteger(capacity) || capacity <= 0) {
+      throw new Error(`console buffer capacity must be a positive integer, got ${capacity}`);
+    }
+    this.slots = new Array<ConsoleLine | undefined>(capacity);
     this.setMaxListeners(50);
   }
 
   push(line: DevconPrintLine): ConsoleLine {
     const entry: ConsoleLine = { ...line, seq: this.nextSeq++, at: Date.now() };
-    this.linesInternal.push(entry);
-    if (this.linesInternal.length > this.capacity) {
-      this.linesInternal.splice(0, this.linesInternal.length - this.capacity);
+    if (this.count === this.capacity) {
+      this.slots[this.head] = entry; // overwrite the oldest
+      this.head = (this.head + 1) % this.capacity;
+    } else {
+      this.slots[(this.head + this.count) % this.capacity] = entry;
+      this.count++;
     }
     this.emit("line", entry);
     return entry;
@@ -48,23 +72,31 @@ export class ConsoleBuffer extends EventEmitter {
   }
 
   get size(): number {
-    return this.linesInternal.length;
+    return this.count;
+  }
+
+  /** The i-th line from the oldest (0) to the newest (size - 1). */
+  private at(i: number): ConsoleLine {
+    return this.slots[(this.head + i) % this.capacity] as ConsoleLine;
+  }
+
+  /** Index (oldest = 0) of the first retained line with seq > afterSeq, or `count` if none. */
+  private indexAfter(afterSeq: number): number {
+    if (this.count === 0) return 0;
+    const oldestSeq = this.at(0).seq;
+    return Math.max(0, Math.min(this.count, afterSeq + 1 - oldestSeq));
   }
 
   tail(options: TailOptions = {}): ConsoleLine[] {
-    const { afterSeq = 0, limit = DEFAULTS.readLimit, channel, contains, pattern } = options;
-    const needle = contains?.toLowerCase();
-    const regex = pattern ? new RegExp(pattern) : undefined;
-
-    let matched = this.linesInternal.filter(
-      (line) =>
-        line.seq > afterSeq &&
-        (channel === undefined || line.channel === channel) &&
-        (needle === undefined || line.message.toLowerCase().includes(needle)) &&
-        (regex === undefined || regex.test(`${line.channel}: ${line.message}`)),
-    );
-    if (matched.length > limit) matched = matched.slice(matched.length - limit);
-    return matched;
+    const { afterSeq = 0, limit = DEFAULTS.readLimit } = options;
+    const matches = buildFilter(options);
+    const stop = this.indexAfter(afterSeq); // lines before this index are too old
+    const out: ConsoleLine[] = [];
+    for (let i = this.count - 1; i >= stop && out.length < limit; i--) {
+      const line = this.at(i);
+      if (matches(line)) out.push(line);
+    }
+    return out.reverse();
   }
 
   /**
@@ -79,14 +111,15 @@ export class ConsoleBuffer extends EventEmitter {
     const { afterSeq = 0, timeoutMs, signal } = options;
     if (signal?.aborted) return Promise.reject(abortError(signal));
 
-    const found = this.linesInternal.find(
-      (line) => line.seq > afterSeq && regex.test(`${line.channel}: ${line.message}`),
-    );
-    if (found) return Promise.resolve(found);
+    const test = (line: ConsoleLine) => regex.test(`${line.channel}: ${line.message}`);
+    for (let i = this.indexAfter(afterSeq); i < this.count; i++) {
+      const line = this.at(i);
+      if (test(line)) return Promise.resolve(line);
+    }
 
     return new Promise((resolve, reject) => {
       const onLine = (line: ConsoleLine) => {
-        if (line.seq > afterSeq && regex.test(`${line.channel}: ${line.message}`)) {
+        if (line.seq > afterSeq && test(line)) {
           settle();
           resolve(line);
         }
@@ -128,7 +161,7 @@ export class ConsoleBuffer extends EventEmitter {
         if (quietTimer) clearTimeout(quietTimer);
         this.off("line", onLine);
         signal?.removeEventListener("abort", finish);
-        resolve(this.linesInternal.filter((line) => line.seq > afterSeq));
+        resolve(this.tail({ afterSeq, limit: this.capacity }));
       };
 
       const armQuiet = () => {
