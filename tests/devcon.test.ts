@@ -7,10 +7,10 @@ import {
   encodeHello,
 } from "../src/protocol/devcon.js";
 import {
-  FakeDevconServer,
   ainfFrame,
   chanFrame,
   cvarFrame,
+  FakeDevconServer,
   prntFrame,
 } from "./helpers/fake-devcon.js";
 

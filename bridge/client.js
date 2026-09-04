@@ -78,7 +78,7 @@ const CLIENT_OPS = {
     let parsed = text;
     try {
       parsed = JSON.parse(text);
-    } catch (error) {
+    } catch {
       /* endpoints may answer plain text or empty */
     }
     return { status: response.status, body: jsonSafe(parsed) };

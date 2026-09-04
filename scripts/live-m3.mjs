@@ -51,7 +51,7 @@ let connection = null;
 for (let i = 0; i < 10 && !connection; i++) {
   try {
     connection = await DevconConnection.connectFirstUsable("127.0.0.1", [29200, 29300]);
-  } catch (error) {
+  } catch {
     await sleep(3000);
   }
 }

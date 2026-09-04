@@ -105,7 +105,7 @@ describe("bridge server half (faked FiveM runtime)", () => {
     const result = JSON.parse((line as string).slice("MCP_RESULT t2b ".length));
     expect(result.ok).toBe(true);
     expect(result.data[0]).toEqual({ src: 1, name: "Player 1", ping: 12, identifiers: null });
-    vi.stubGlobal("GetPlayerIdentifiers", (src: string) => ["license:abc"]);
+    vi.stubGlobal("GetPlayerIdentifiers", () => ["license:abc"]);
   });
 
   it("call_export invokes a resource export synchronously", () => {

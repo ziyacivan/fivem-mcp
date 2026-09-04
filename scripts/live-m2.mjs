@@ -81,7 +81,7 @@ try {
 focusWindow(game.hwnd);
 pressKey("f8");
 await sleep(400);
-const f2 = shot("f8-open");
+shot("f8-open");
 pressKey("f8");
 await sleep(400);
 shot("f8-close");

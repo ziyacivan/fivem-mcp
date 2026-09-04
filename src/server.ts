@@ -1,4 +1,5 @@
 import { once } from "node:events";
+import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
@@ -65,8 +66,13 @@ const TARGET_DESCRIPTION =
   "LOCAL console commands only (connect, quit, tooling); RegisterCommand chat commands " +
   "are not console commands.";
 
+/** Single source of truth for the version is package.json (dist/ sits one level below it). */
+export const PACKAGE_VERSION: string = (
+  createRequire(import.meta.url)("../package.json") as { version: string }
+).version;
+
 export function buildMcpServer(config: Config, hub: Hub): McpServer {
-  const server = new McpServer({ name: "fivem-mcp-server", version: "0.5.0" });
+  const server = new McpServer({ name: "fivem-mcp-server", version: PACKAGE_VERSION });
 
   server.registerTool(
     "status",

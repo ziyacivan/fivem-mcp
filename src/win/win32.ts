@@ -4,6 +4,10 @@
 
 import koffi from "koffi";
 import {
+  buildKeyPress,
+  buildKeyRelease,
+  buildMouseInput,
+  buildUnicodeText,
   INPUT_SIZE,
   MOUSEEVENTF_ABSOLUTE,
   MOUSEEVENTF_LEFTDOWN,
@@ -12,10 +16,6 @@ import {
   MOUSEEVENTF_RIGHTDOWN,
   MOUSEEVENTF_RIGHTUP,
   MOUSEEVENTF_WHEEL,
-  buildKeyPress,
-  buildKeyRelease,
-  buildMouseInput,
-  buildUnicodeText,
 } from "./keys.js";
 
 let api: ReturnType<typeof buildApi> | null = null;

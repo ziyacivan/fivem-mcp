@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  RconClient,
-  RconError,
   encodeRconRequest,
   parseRconResponse,
+  RconClient,
+  RconError,
   sameHost,
 } from "../src/protocol/rcon.js";
 import { FakeRconServer } from "./helpers/fake-rcon.js";

@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  INPUT_SIZE,
   buildKeyPress,
   buildKeyRelease,
-  buildKeyboardInput,
   buildMouseInput,
   buildUnicodeText,
+  INPUT_SIZE,
   keySpec,
 } from "../src/win/keys.js";
 

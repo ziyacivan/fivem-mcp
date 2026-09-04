@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ServerLogFile, parseServerLogLine } from "../src/protocol/server-log.js";
+import { parseServerLogLine, ServerLogFile } from "../src/protocol/server-log.js";
 
 describe("parseServerLogLine", () => {
   it("splits the channel tag and strips ANSI + the cfx prompt", () => {

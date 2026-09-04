@@ -210,7 +210,7 @@ pnpm test        # vitest — 102 tests: fake devcon/rcon servers, byte-level Se
 pnpm typecheck
 pnpm check       # biome
 pnpm build       # -> dist/
-pnpm ci          # all of the above
+pnpm run ci      # all of the above (plain `pnpm ci` is a pnpm builtin and errors)
 ```
 
 Releasing: bump `package.json` (and `server.json`) version, tag `vX.Y.Z`, `npm publish`
